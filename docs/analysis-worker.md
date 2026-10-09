@@ -109,6 +109,13 @@ still one billable unit. Only a _terminal_ job is retried, and that means queuei
 - A process that was killed cannot fail its own job, so the loop calls `queue.reap_stale` on
   its own schedule and once at startup. Jobs are **failed**, not requeued - starting a new
   attempt behind a user's back is a product decision, not something a sweep should make.
+- The lease starts when a job is **dispatched**, so the sweep only ever looks at `dispatched`
+  and `running`. Those are the statuses a worker is responsible for reporting on. A `queued`
+  job is waiting for a dispatcher rather than for a worker, so no amount of age makes it
+  stale: an undrained backlog is a fact about the deployment - it shows up as a growing
+  `queued` count - and it is not a reason to fail work nobody ever started. The full state
+  machine, including what the sweep may and may not touch, is in
+  [queue-state-machine.md](queue-state-machine.md).
 - Idempotency is structural rather than a flag: the claim is a compare-and-swap,
   `analysis_results` upserts on `(job_id, kind)`, the MIDI key is derived from the job, and
   `queue.complete` refuses a job that has left the state this worker believed it was in. The

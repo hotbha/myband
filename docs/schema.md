@@ -353,9 +353,13 @@ enqueue (queued) -> claim_next (FOR UPDATE SKIP LOCKED) -> mark_dispatched
   `None` back and stops instead of overwriting the winner.
 - `complete` writes the artifacts, the job row and `songs.latest_job_id` in one
   transaction, so the library never shows a finished job without results.
-- `reap_stale` fails in-flight jobs whose heartbeat is older than 15 minutes. It
-  fails rather than requeues: starting over is a product decision (a new job row),
-  not something a background sweep should do behind the user's back.
+- `reap_stale` fails jobs whose worker stopped reporting. The 15 minute lease is measured
+  from `heartbeat_at`, falling back to the start or dispatch time, and it covers
+  `dispatched` and `running` only - those are the statuses a worker is supposed to be
+  reporting on. A `queued` job has nobody to report on it, so it is never reaped for age
+  alone; see [queue-state-machine.md](queue-state-machine.md). It fails rather than
+  requeues: starting over is a product decision (a new job row), not something a background
+  sweep should do behind the user's back.
 
 ### Deleting things
 

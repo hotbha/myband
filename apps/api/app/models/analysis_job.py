@@ -26,6 +26,14 @@ TERMINAL_STATUSES = ("succeeded", "failed", "canceled")
 # inference clause only matches the partial index when the predicate is the same.
 _STATUS_LIST = "'queued', 'dispatched', 'running'"
 
+# The statuses a worker is responsible for reporting on. `queued` is deliberately
+# not one of them: nobody holds a queued job yet, so silence from it means
+# nothing. Only a job that was handed to a worker can go quiet.
+HEARTBEAT_STATUSES = ("dispatched", "running")
+
+# As SQL text, in the same literal style as `_STATUS_LIST`.
+_HEARTBEAT_LIST = "'dispatched', 'running'"
+
 # Terminal statuses. Nothing moves a job out of these - a retry is a new row -
 # and `transition` refuses to even try, so a late worker cannot resurrect one.
 _TERMINAL_LIST = "'succeeded', 'failed', 'canceled'"
@@ -211,7 +219,12 @@ def list_stale_active(
     before: datetime,
     limit: int = 100,
 ) -> list[AnalysisJob]:
-    """In-flight jobs whose last sign of life is older than ``before``.
+    """Jobs a worker was holding whose last sign of life is older than ``before``.
+
+    Only ``dispatched`` and ``running`` are considered, because those are the
+    statuses a worker is supposed to be reporting on. A ``queued`` job is waiting
+    for a dispatcher rather than for a worker, so its age says nothing about
+    whether anything went wrong and it is never selected here, however old it is.
 
     A job that was dispatched but never heartbeated falls back to its dispatch
     time, so a worker that dies on arrival is reaped like any other. The scan is
@@ -221,7 +234,7 @@ def list_stale_active(
         f"""
         select *
         from public.analysis_jobs
-        where status in ({_STATUS_LIST})
+        where status in ({_HEARTBEAT_LIST})
           and coalesce(heartbeat_at, started_at, dispatched_at, created_at) < %s
         order by created_at
         limit %s

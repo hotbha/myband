@@ -5,6 +5,10 @@ made by two suites: the one about what a completed upload becomes
 (``test_upload_flow.py``) and the one about what a song reports afterwards
 (``test_upload_results.py``). Keeping them here leaves each suite to assert what it
 is actually about.
+
+The queue has one shared step too - ``claim_own_job`` - for the same reason: two
+suites drive jobs through the queue and both have to cope with the queue holding
+rows that are not theirs.
 """
 
 from collections.abc import Callable
@@ -14,7 +18,8 @@ from uuid import UUID
 import psycopg
 import pytest
 from app.core.problems import ApiProblem
-from app.services import uploads
+from app.models.analysis_job import AnalysisJob
+from app.services import queue, uploads
 from tests.fakes import FakeObjectStore
 
 # A file small enough to be uninteresting, large enough to be plausible.
@@ -72,3 +77,21 @@ def refused(call: Callable[..., object], *args: object, **kwargs: object) -> Api
     with pytest.raises(ApiProblem) as raised:
         call(*args, **kwargs)
     return raised.value
+
+
+def claim_own_job(conn: psycopg.Connection, *, song_id: UUID) -> AnalysisJob:
+    """Claim this song's job, whatever else the queue happens to be holding.
+
+    ``claim_next`` takes the *oldest* queued job in the table, and the suites that
+    use this share a database with the seed and with everything uploaded to it
+    since. A test that assumed the first claim was its own would take someone
+    else's job and then assert about the wrong row.
+
+    Claiming more than the test needs is harmless: the extra rows stay queued in
+    the test's rolled-back transaction.
+    """
+    for candidate in queue.claim_next(conn, limit=queue.MAX_BATCH):
+        if candidate.song_id == song_id:
+            return candidate
+
+    raise AssertionError("no queued job for this song")

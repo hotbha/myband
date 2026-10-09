@@ -21,6 +21,7 @@ from app.models.analysis_job import AnalysisJob
 from app.models.analysis_result import ResultInput
 from app.schemas.analysis_job import AnalysisJobOut
 from app.services import queue
+from tests.support import claim_own_job
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("MYBAND_TEST_DATABASE_URL"),
@@ -61,28 +62,13 @@ def _running_job(
     )
     assert outcome.created is True
 
-    claimed = _claim_own_job(conn, song_id=song_id)
+    claimed = claim_own_job(conn, song_id=song_id)
     dispatched = queue.mark_dispatched(conn, job=claimed, runpod_job_id="rp_test")
     assert dispatched is not None
 
     running = queue.mark_running(conn, job=dispatched)
     assert running is not None
     return running
-
-
-def _claim_own_job(conn: psycopg.Connection, *, song_id: UUID) -> AnalysisJob:
-    """Claim this song's job, whatever else the database happens to be holding.
-
-    ``claim_next`` takes the *oldest* queued job in the table, and this suite shares a
-    database with the seed and with everything uploaded to it since. A test that
-    assumed the first claim was its own would take someone else's job and then assert
-    about the wrong row.
-    """
-    for candidate in queue.claim_next(conn, limit=queue.MAX_BATCH):
-        if candidate.song_id == song_id:
-            return candidate
-
-    raise AssertionError("no queued job for this song")
 
 
 def test_enqueue_creates_one_job_per_song(
@@ -138,7 +124,7 @@ def test_happy_path_reaches_succeeded(
     # `claim_next` hands back the oldest queued rows in the *table*, so this asks it
     # for this song's job rather than assuming it is the only one there - the database
     # may well be holding a real upload's queued job alongside it.
-    claimed = _claim_own_job(conn, song_id=song_id)
+    claimed = claim_own_job(conn, song_id=song_id)
     assert claimed.id == queued.id
 
     dispatched = queue.mark_dispatched(conn, job=claimed, runpod_job_id="rp_test_1")
@@ -312,7 +298,7 @@ def test_begin_starts_a_job_for_a_worker_that_does_the_work_itself(
         source_object_key=make_object_key(name="source.wav"),
     )
 
-    started = queue.begin(conn, job=_claim_own_job(conn, song_id=song_id))
+    started = queue.begin(conn, job=claim_own_job(conn, song_id=song_id))
 
     assert started is not None
     assert started.status == "running"
@@ -337,7 +323,7 @@ def test_begin_refuses_a_job_that_has_moved_on(
         pipeline_version=PIPELINE_VERSION,
         source_object_key=make_object_key(name="source.wav"),
     )
-    claimed = _claim_own_job(conn, song_id=song_id)
+    claimed = claim_own_job(conn, song_id=song_id)
     queue.fail(conn, job=claimed, error_code="stale")
 
     assert queue.begin(conn, job=claimed) is None
@@ -357,7 +343,7 @@ def test_a_job_started_here_is_still_reapable(
         pipeline_version=PIPELINE_VERSION,
         source_object_key=make_object_key(name="source.wav"),
     )
-    started = queue.begin(conn, job=_claim_own_job(conn, song_id=song_id))
+    started = queue.begin(conn, job=claim_own_job(conn, song_id=song_id))
     assert started is not None
 
     reaped = queue.reap_stale(conn, older_than=timedelta(0))

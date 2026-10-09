@@ -22,6 +22,9 @@ Decisions worth knowing before changing anything here:
 * A retry is a new job row. Nothing resurrects a terminal job, which is what makes
   usage countable: one billable unit is one job that reached ``succeeded`` (see
   docs/schema.md, "Billable unit").
+* A job is reaped only while a worker is supposed to be reporting on it. ``queued``
+  is not a state a worker holds, so a queued job never expires for age alone - see
+  :func:`reap_stale`. The state machine is documented in docs/queue-state-machine.md.
 
 Deliberately not here: the dispatcher loop, the RunPod client and the HTTP routes.
 This module is the seam they will call.
@@ -39,7 +42,9 @@ from app.models.analysis_job import AnalysisJob
 from app.models.analysis_result import ResultInput
 
 # A job nobody has heard from for this long is assumed dead. The worker
-# heartbeats well inside the window, including while it waits on RunPod.
+# heartbeats well inside the window, including while it waits on RunPod. It is a
+# lease on a *worker*, not on a row: it starts when a job is dispatched and covers
+# `dispatched` and `running` only.
 STALE_AFTER = timedelta(minutes=15)
 
 # Upper bound on any single claim or reap, so a caller cannot accidentally ask for
@@ -263,7 +268,13 @@ def reap_stale(
     limit: int = MAX_BATCH,
     at: datetime | None = None,
 ) -> list[AnalysisJob]:
-    """Fail in-flight jobs whose worker stopped reporting.
+    """Fail jobs whose worker stopped reporting.
+
+    The lease starts when a job is handed to a worker, so only ``dispatched`` and
+    ``running`` jobs are candidates. A ``queued`` job has nobody to report on it, so
+    it is left alone however old it is: a backlog that is not being drained is an
+    operational fact about the deployment, not a reason to fail work nobody ever
+    started.
 
     A worker that is killed cannot report anything, so a sweep is the only way a
     job leaves ``dispatched``/``running``. Reaped jobs are marked failed rather

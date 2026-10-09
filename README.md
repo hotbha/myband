@@ -9,7 +9,8 @@ level security and the analysis queue seam - is versioned as Supabase migrations
 the browser-to-R2 upload lifecycle queues an analysis job. A standalone worker drains
 that queue: it fetches the recording, measures duration, BPM and key, transcribes a
 MIDI sketch and writes the result back against the song. Chords and song sections are
-the next analysis stages.
+the next analysis stages. What has to be true before a public beta, and what is
+knowingly missing, is in `PRODUCTION_READINESS.md`.
 
 ## Stack
 
@@ -55,7 +56,9 @@ myband/
 ├─ packages/
 │  └─ shared/                 @myband/shared - cross-boundary types + Zod schemas
 ├─ supabase/                  local stack: config.toml, migrations/, seed.sql
-├─ docs/                      schema.md (tables, indexes, RLS), upload-flow.md, analysis-worker.md
+├─ docs/                      schema.md (tables, indexes, RLS), upload-flow.md,
+│                             analysis-worker.md, queue-state-machine.md
+├─ PRODUCTION_READINESS.md    the risk register, and the gates before a public beta
 ├─ eslint.config.mjs          base flat config, extended by each package
 ├─ tsconfig.base.json         strict compiler options inherited by packages
 ├─ pnpm-workspace.yaml        workspace globs + pnpm settings
@@ -195,12 +198,13 @@ contracts and the error table; this is the shape of it:
 | Piece                                | Responsibility                                                         |
 | ------------------------------------ | ---------------------------------------------------------------------- |
 | `app/api/routes/uploads.py`          | `POST /uploads/presign`, `POST /uploads/complete`, `GET /uploads/{id}` |
-| `app/api/routes/songs.py`            | `GET /songs` (the library) and `GET /songs/{id}`                       |
+| `app/api/routes/songs.py`            | `GET /songs`, `GET /songs/{id}`, `GET /songs/{id}/midi`                |
 | `app/api/routes/jobs.py`             | `GET /jobs/{id}`                                                       |
 | `app/services/uploads.py`            | The lifecycle rules: what may be uploaded, and what it becomes         |
 | `app/services/storage.py`            | R2 (S3) access - presigning and HEAD - behind a protocol               |
 | `app/core/auth.py`                   | Token verification: JWKS for asymmetric keys, the secret for HS256     |
-| `features/uploads/components/*`      | The dropzone, the progress bar, the library list                       |
+| `features/uploads/components/*`      | The dropzone, the library list and its poller, the MIDI download       |
+| `features/uploads/jobs.ts`           | Whether a job is still in flight (the page and the poller)             |
 | `features/uploads/client-api.ts`     | Presign and complete, from the browser                                 |
 | `features/uploads/put-to-storage.ts` | The XHR PUT to storage - the only reason this app uses XHR             |
 | `features/uploads/server-api.ts`     | The library, read while the dashboard renders                          |
@@ -306,10 +310,14 @@ Rules that are not negotiable:
 
 ## Not implemented yet
 
-Audio analysis itself: the RunPod dispatcher and its workers, the artifact contracts
-(BPM, key, chords, MIDI, song sections) and the screens that read them. The
-database, the queue state machine (`app/services/queue.py`), the job contract and the
-whole upload lifecycle (`docs/upload-flow.md`) are implemented and tested - the
-uploader queues a job, and the job waits for a worker to claim it. Also missing: the
-sweeper for abandoned uploads and the storage-cleanup drain. AI video generation, AI
-musicians and training pipelines are out of scope for this repository.
+Chords and song sections. The worker measures duration, BPM and key and writes a MIDI
+sketch, and the library shows all of it, but chords and sections have no stage and no
+screen yet. Nothing runs the worker for you either: it is a process (`pnpm worker:api`),
+and the RunPod dispatcher that would scale it is not wired into the queue. Also missing:
+the sweeper for abandoned uploads, the drainer for `storage_gc_queue`, a cancel path, a
+retry for a song that has already failed, and any quota on what an account may upload.
+AI video generation, AI musicians and training pipelines are out of scope for this
+repository.
+
+Each of those is a numbered risk in `PRODUCTION_READINESS.md`, with what stands in for it
+today and what has to be true before the beta.

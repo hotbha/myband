@@ -100,6 +100,36 @@ def claim_next(conn: psycopg.Connection, *, limit: int = 1) -> list[AnalysisJob]
     return analysis_job.claim_next_queued(conn, limit=max(1, min(limit, MAX_BATCH)))
 
 
+def begin(
+    conn: psycopg.Connection,
+    *,
+    job: AnalysisJob,
+    at: datetime | None = None,
+) -> AnalysisJob | None:
+    """``queued`` -> ``running`` for a worker that does the work itself.
+
+    The self-hosted path: there is no dispatch hop and no GPU provider to report a
+    job id, so the worker that took the job out of the queue is the one that starts
+    it. The attempt is counted here for the same reason :func:`mark_dispatched`
+    counts it - ``attempts`` means "times handed to a worker" - and the first
+    heartbeat is stamped immediately, so a job that dies between this statement and
+    the worker's own clock is still reaped rather than stuck.
+
+    ``None`` means the job is no longer queued; whoever owns it now, not this
+    worker.
+    """
+    moment = at or _now()
+    return analysis_job.transition(
+        conn,
+        job_id=job.id,
+        expected_status=job.status,
+        status="running",
+        attempts=job.attempts + 1,
+        started_at=moment,
+        heartbeat_at=moment,
+    )
+
+
 def mark_dispatched(
     conn: psycopg.Connection,
     *,

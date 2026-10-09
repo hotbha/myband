@@ -15,6 +15,7 @@ migrations plus `supabase/seed.sql`.
 | `20261009014500_core_schema.sql`            | tables, constraints, indexes, comments                             |
 | `20261009014600_functions_and_triggers.sql` | `set_updated_at`, `normalize_profile`, `handle_new_user`, backfill |
 | `20261009014700_rls_and_grants.sql`         | row level security policies, grants, default privileges            |
+| `20261009014800_song_analysis_summary.sql`  | `songs.bpm`, `songs.musical_key`, and the CHECKs that shape them   |
 
 ## Shape
 
@@ -116,8 +117,15 @@ raw audio in R2 and is never rewritten; derived artifacts are rows in
 DELETE SET NULL`.
 - `latest_job_id` is denormalised so the library list needs no aggregate. The queue
   service maintains it in the same transaction that finishes a job.
-- `duration_ms` is measured from the source object once it is confirmed in the
-  bucket; `source_checksum` is the sha256 the client claimed, and is optional.
+- `duration_ms`, `bpm` and `musical_key` are the analysis headline, denormalised for
+  the same reason: the library reads them once per row, and reading them out of
+  `analysis_results` would be a join plus a jsonb extraction per song. The worker
+  writes all three in the transaction that finishes a job
+  (docs/analysis-worker.md), so a song with a succeeded job always carries them and
+  an unanalysed one carries nulls rather than a guess.
+- `musical_key` is one text value (`'A minor'`) with the 24 legal spellings asserted
+  by a `CHECK`, rather than a (tonic, mode) pair nothing would join to.
+- `source_checksum` is the sha256 the client claimed, and is optional.
 - `source_object_key ~ 'users/<user uuid>/...'` and `char_length <= 512`.
 
 ### `uploads`

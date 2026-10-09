@@ -25,6 +25,11 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.10",
 ]
+worker = [
+    "librosa>=1.0.0",
+    "pretty-midi>=0.2.11.post0",
+    "soundfile>=0.14.0",
+]
 
 [tool.uv]
 # The service runs from source (uvicorn app.main:app --app-dir .); it is never

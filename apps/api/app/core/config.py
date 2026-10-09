@@ -98,6 +98,49 @@ class Settings(BaseSettings):
     runpod_api_key: SecretStr = Field(default=SecretStr(""), validation_alias="RUNPOD_API_KEY")
     runpod_endpoint_id: str = Field(default="", validation_alias="RUNPOD_ENDPOINT_ID")
 
+    # --- The analysis worker (`python -m app.workers`) ---
+    # One standalone process that claims from `analysis_jobs` and does the work
+    # itself. Nothing here is read by the API process.
+    #
+    # An idle worker polls instead of being notified: one query per interval, no
+    # broker, and a queue that can be drained by hand when something needs looking
+    # at.
+    worker_poll_seconds: float = Field(
+        default=5.0, ge=0.5, le=300, validation_alias="MYBAND_WORKER_POLL_SECONDS"
+    )
+    # How often a running job says it is alive. `queue.STALE_AFTER` (15 minutes) is
+    # the deadline this has to beat by a wide margin, or a healthy job gets reaped
+    # while it is still working.
+    worker_heartbeat_seconds: float = Field(
+        default=15.0, ge=1, le=300, validation_alias="MYBAND_WORKER_HEARTBEAT_SECONDS"
+    )
+    # Tries for one job, transient failures only: a bucket that returned 503 is
+    # worth another go, an object that is not there is not.
+    worker_max_attempts: int = Field(
+        default=3, ge=1, le=10, validation_alias="MYBAND_WORKER_MAX_ATTEMPTS"
+    )
+    worker_retry_backoff_seconds: float = Field(
+        default=2.0, ge=0, le=60, validation_alias="MYBAND_WORKER_RETRY_BACKOFF_SECONDS"
+    )
+    # Wall-clock budget for one job, checked between stages. It cannot interrupt a
+    # detector already running; it stops the worker from spending an hour on a file
+    # that will never finish.
+    worker_job_timeout_seconds: float = Field(
+        default=900.0, ge=30, le=7200, validation_alias="MYBAND_WORKER_JOB_TIMEOUT_SECONDS"
+    )
+    # How often the loop sweeps for jobs whose worker stopped reporting. A process
+    # that was killed cannot fail its own job, so this is the only way out of
+    # `running` for it.
+    worker_reap_seconds: float = Field(
+        default=60.0, ge=5, le=3600, validation_alias="MYBAND_WORKER_REAP_SECONDS"
+    )
+    # How much of the recording the MIDI sketch is built from. The pitch tracker
+    # costs about one second per second of audio, so this is what keeps a long
+    # song's job bounded (docs/analysis-worker.md).
+    worker_midi_window_seconds: int = Field(
+        default=30, ge=5, le=600, validation_alias="MYBAND_WORKER_MIDI_WINDOW_SECONDS"
+    )
+
     @property
     def cors_origin_list(self) -> list[str]:
         """``MYBAND_CORS_ORIGINS`` split into a list for CORSMiddleware."""

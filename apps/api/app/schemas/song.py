@@ -7,6 +7,7 @@ returned with a flag the UI has to remember to honour.
 """
 
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 from app.models.analysis_job import AnalysisJob
@@ -26,6 +27,10 @@ class SongOut(BaseModel):
     title: str
     artist: str | None
     duration_ms: int | None
+    # The analysis headline, written by the worker when a job succeeds (migration 04).
+    # Null on a song nothing has analysed yet, and on one whose analysis failed.
+    bpm: Decimal | None
+    musical_key: str | None
     source_object_key: str
     source_bytes: int | None
     source_content_type: str | None

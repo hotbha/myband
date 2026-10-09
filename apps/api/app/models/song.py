@@ -6,6 +6,7 @@ is immutable, and a re-upload becomes a new song.
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 import psycopg
@@ -22,6 +23,10 @@ class Song(Record):
     title: str
     artist: str | None
     duration_ms: int | None
+    # The analysis headline, denormalised so the library list needs no join
+    # (migration 04). Written by the worker, null until something has analysed.
+    bpm: Decimal | None
+    musical_key: str | None
     source_object_key: str
     source_checksum: str | None
     source_bytes: int | None
@@ -122,6 +127,45 @@ def set_latest_job(
     row = conn.execute(
         "update public.songs set latest_job_id = %s where id = %s returning id",
         (job_id, song_id),
+    ).fetchone()
+    return row is not None
+
+
+def set_analysis(
+    conn: psycopg.Connection,
+    *,
+    song_id: UUID,
+    duration_ms: int,
+    bpm: Decimal | float,
+    musical_key: str,
+) -> bool:
+    """Record what the analysis measured: length, tempo and key.
+
+    Called by the analysis worker inside the same transaction as ``queue.complete``,
+    which is what makes the pointer and the headline move together - a library row can
+    never claim a finished analysis without the numbers that came with it.
+
+    ``duration_ms`` is written here rather than at upload time because until something
+    has decoded the file, the only length anyone has is the container's guess. The
+    worker measures it from the header, and this is one of the three columns the
+    library list reads.
+
+    Scoped to a song that is not deleted, and returns ``False`` when the row is gone, so
+    a worker racing a delete does not resurrect a soft-deleted song's numbers.
+    """
+    row = conn.execute(
+        """
+        update public.songs
+        set duration_ms = %s, bpm = %s, musical_key = %s
+        where id = %s and deleted_at is null
+        returning id
+        """,
+        (
+            duration_ms,
+            Decimal(str(bpm)).quantize(Decimal("0.01")),
+            musical_key,
+            song_id,
+        ),
     ).fetchone()
     return row is not None
 

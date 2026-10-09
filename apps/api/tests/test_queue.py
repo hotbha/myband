@@ -292,6 +292,80 @@ def test_a_reaped_job_can_be_queued_again_as_a_new_row(
     assert len(analysis_job.list_for_song(conn, song_id)) == 2
 
 
+def test_begin_starts_a_job_for_a_worker_that_does_the_work_itself(
+    conn: psycopg.Connection,
+    user_id: UUID,
+    song_id: UUID,
+    make_object_key: Callable[..., str],
+) -> None:
+    """The self-hosted path: no dispatch hop, and the attempt is still counted.
+
+    ``mark_dispatched`` counts an attempt because a job handed to a GPU is a job that will
+    be billed for the time. A worker that took the job out of the queue itself is in the
+    same position, and ``attempts`` has to mean the same thing either way.
+    """
+    queue.enqueue(
+        conn,
+        user_id=user_id,
+        song_id=song_id,
+        pipeline_version=PIPELINE_VERSION,
+        source_object_key=make_object_key(name="source.wav"),
+    )
+
+    started = queue.begin(conn, job=_claim_own_job(conn, song_id=song_id))
+
+    assert started is not None
+    assert started.status == "running"
+    assert started.attempts == 1
+    assert started.started_at is not None
+    # The first heartbeat is stamped with the start, so a job that dies the moment it
+    # starts is still reaped rather than held forever.
+    assert started.heartbeat_at == started.started_at
+
+
+def test_begin_refuses_a_job_that_has_moved_on(
+    conn: psycopg.Connection,
+    user_id: UUID,
+    song_id: UUID,
+    make_object_key: Callable[..., str],
+) -> None:
+    """The guard is the observed status, so a job the caller no longer owns is left alone."""
+    queue.enqueue(
+        conn,
+        user_id=user_id,
+        song_id=song_id,
+        pipeline_version=PIPELINE_VERSION,
+        source_object_key=make_object_key(name="source.wav"),
+    )
+    claimed = _claim_own_job(conn, song_id=song_id)
+    queue.fail(conn, job=claimed, error_code="stale")
+
+    assert queue.begin(conn, job=claimed) is None
+
+
+def test_a_job_started_here_is_still_reapable(
+    conn: psycopg.Connection,
+    user_id: UUID,
+    song_id: UUID,
+    make_object_key: Callable[..., str],
+) -> None:
+    """`begin` puts a job in the active set, which is what the sweep looks at."""
+    queue.enqueue(
+        conn,
+        user_id=user_id,
+        song_id=song_id,
+        pipeline_version=PIPELINE_VERSION,
+        source_object_key=make_object_key(name="source.wav"),
+    )
+    started = queue.begin(conn, job=_claim_own_job(conn, song_id=song_id))
+    assert started is not None
+
+    reaped = queue.reap_stale(conn, older_than=timedelta(0))
+
+    assert started.id in {job.id for job in reaped}
+    assert analysis_job.get(conn, started.id).status == "failed"
+
+
 def test_the_usage_meter_counts_only_success(
     conn: psycopg.Connection,
     user_id: UUID,

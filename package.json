@@ -12,6 +12,7 @@
     "dev": "concurrently -k -n api,web -c magenta,cyan \"pnpm dev:api\" \"pnpm dev:web\"",
     "dev:web": "pnpm --filter @myband/web dev",
     "dev:api": "uv run --project apps/api uvicorn app.main:app --reload --app-dir apps/api --host 127.0.0.1 --port 8000",
+    "worker:api": "uv run --project apps/api --group worker --directory apps/api python -m app.workers",
     "build": "pnpm --filter @myband/web build",
     "start": "pnpm --filter @myband/web start",
     "lint": "pnpm -r --if-present lint",

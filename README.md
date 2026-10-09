@@ -4,9 +4,12 @@ Music intelligence platform: upload audio, get **BPM, key, chords, MIDI and song
 sections** back.
 
 The workspace, toolchain and environment strategy are in place, authentication
-(Google, email, protected dashboard) is implemented, and the database - seven
-tables, row level security and the analysis queue seam - is versioned as Supabase
-migrations. Audio analysis itself is not built yet.
+(Google, email, protected dashboard) is implemented, the database - seven tables, row
+level security and the analysis queue seam - is versioned as Supabase migrations, and
+the browser-to-R2 upload lifecycle queues an analysis job. A standalone worker drains
+that queue: it fetches the recording, measures duration, BPM and key, transcribes a
+MIDI sketch and writes the result back against the song. Chords and song sections are
+the next analysis stages.
 
 ## Stack
 
@@ -31,7 +34,7 @@ myband/
 │  │  │  ├─ schemas/          Pydantic response contracts
 │  │  │  ├─ services/         queue.py, uploads.py, storage.py - business logic
 │  │  │  ├─ api/              deps, error handlers and routes/ (docs/upload-flow.md)
-│  │  │  └─ workers/          RunPod integration (not built yet)
+│  │  │  └─ workers/          the analysis worker (docs/analysis-worker.md)
 │  │  ├─ tests/               pytest suite: unit tests + database tests
 │  │  ├─ pyproject.toml       deps live here (no requirements.txt)
 │  │  ├─ .python-version
@@ -52,7 +55,7 @@ myband/
 ├─ packages/
 │  └─ shared/                 @myband/shared - cross-boundary types + Zod schemas
 ├─ supabase/                  local stack: config.toml, migrations/, seed.sql
-├─ docs/                      schema.md (tables, indexes, RLS), upload-flow.md
+├─ docs/                      schema.md (tables, indexes, RLS), upload-flow.md, analysis-worker.md
 ├─ eslint.config.mjs          base flat config, extended by each package
 ├─ tsconfig.base.json         strict compiler options inherited by packages
 ├─ pnpm-workspace.yaml        workspace globs + pnpm settings
@@ -81,19 +84,20 @@ pnpm dev                                      # web :3000  +  api :8000
 
 Run from the repo root:
 
-| Script                              | Purpose                                |
-| ----------------------------------- | -------------------------------------- |
-| `pnpm dev`                          | web + api together (concurrently)      |
-| `pnpm dev:web` / `pnpm dev:api`     | one service only                       |
-| `pnpm build` / `pnpm start`         | production build / serve `apps/web`    |
-| `pnpm lint`                         | ESLint across every JS package         |
-| `pnpm lint:api`                     | ruff check `apps/api`                  |
-| `pnpm typecheck`                    | `tsc --noEmit` across every JS package |
-| `pnpm test:api`                     | pytest `apps/api`                      |
-| `pnpm format` / `pnpm format:check` | Prettier (Markdown, JSON, YAML, TS)    |
-| `pnpm format:api`                   | ruff format `apps/api`                 |
-| `pnpm ui:add <component>`           | `shadcn add` inside `apps/web`         |
-| `pnpm clean`                        | remove build artifacts                 |
+| Script                              | Purpose                                 |
+| ----------------------------------- | --------------------------------------- |
+| `pnpm dev`                          | web + api together (concurrently)       |
+| `pnpm dev:web` / `pnpm dev:api`     | one service only                        |
+| `pnpm worker:api`                   | the analysis worker (`--once` to drain) |
+| `pnpm build` / `pnpm start`         | production build / serve `apps/web`     |
+| `pnpm lint`                         | ESLint across every JS package          |
+| `pnpm lint:api`                     | ruff check `apps/api`                   |
+| `pnpm typecheck`                    | `tsc --noEmit` across every JS package  |
+| `pnpm test:api`                     | pytest `apps/api`                       |
+| `pnpm format` / `pnpm format:check` | Prettier (Markdown, JSON, YAML, TS)     |
+| `pnpm format:api`                   | ruff format `apps/api`                  |
+| `pnpm ui:add <component>`           | `shadcn add` inside `apps/web`          |
+| `pnpm clean`                        | remove build artifacts                  |
 
 ## Environment variables
 
@@ -216,6 +220,28 @@ Decisions worth knowing:
   every rule against the object.
 - **One error shape** - `{"detail": {"code", "message"}}`, FastAPI's own 422
   included - so the UI has one thing to render and one field to branch on.
+
+## Analysis
+
+A queued job is picked up by a standalone worker - `pnpm worker:api`, or
+`python -m app.workers --once` to drain the queue and exit. It fetches the recording
+from the bucket, measures its duration, tempo and key, writes a MIDI sketch and stores
+the result against the song. `docs/analysis-worker.md` holds the sequence, the failure
+codes, the measured cost of each stage and the limitations.
+
+| Piece                     | Responsibility                                                |
+| ------------------------- | ------------------------------------------------------------- |
+| `app/workers/runner.py`   | The loop: claim, work, sweep for orphans, stop on a signal    |
+| `app/workers/pipeline.py` | One job's lifecycle, and what it writes on success or failure |
+| `app/workers/stages.py`   | Fetch, measure, transcribe, store - with retries and a budget |
+| `app/workers/analysis.py` | Duration, tempo and key (librosa)                             |
+| `app/workers/midi.py`     | The MIDI artifact, and the seam a real transcriber slots into |
+| `app/services/queue.py`   | The queue: every transition a job can make                    |
+
+Its dependencies are not the API's. The audio stack is the `worker` dependency group
+(`uv sync --project apps/api --group worker`), because the API process never decodes
+audio: `librosa`, `soundfile` and `pretty_midi` are installed where the work happens and
+nowhere else.
 
 ## Database
 

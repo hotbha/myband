@@ -44,6 +44,9 @@ class ErrorCode(StrEnum):
 
     # --- Our side ---
     STORAGE_UNAVAILABLE = "storage_unavailable"
+    # The bucket answered, and refused: a request its policy will not accept (a content
+    # type outside `allowed_mime_types`, say). Nothing about waiting changes that.
+    STORAGE_REJECTED = "storage_rejected"
     AUTH_UNAVAILABLE = "auth_unavailable"
     SERVER_MISCONFIGURED = "server_misconfigured"
 

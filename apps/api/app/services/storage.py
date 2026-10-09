@@ -1,9 +1,12 @@
 """Cloudflare R2 access - the only place this service talks to S3.
 
-R2 speaks the S3 API, so ``boto3`` is the whole client. Two capabilities are used:
-signing a PUT URL that lets a browser fill one object without credentials, and a
-HEAD afterwards to find out what actually landed. Neither pulls audio into this
-process, which is what keeps "FastAPI never receives file bytes" true.
+R2 speaks the S3 API, so ``boto3`` is the whole client. Four capabilities are used:
+signing a PUT URL that lets a browser fill one object without credentials, a HEAD
+afterwards to find out what actually landed, a GET of a recording for the analysis
+worker, and a PUT of the artifacts the worker produced. The first two are the API's
+and the last two are the worker's - a browser never holds a credential, and the API
+process never holds audio, which is what keeps "FastAPI never receives file bytes"
+true.
 
 ``R2_ENDPOINT_URL`` overrides the endpoint, which is how a local run points at
 MinIO; everything else about the client is identical, because MinIO is S3 too.
@@ -59,6 +62,30 @@ class ObjectStore(Protocol):
         """What the bucket holds at ``object_key``, or ``None`` when nothing does."""
         ...
 
+    def download(self, *, object_key: str) -> bytes | None:
+        """The object's bytes, or ``None`` when the bucket does not hold it.
+
+        The analysis worker's read: the audio it analyses was uploaded straight
+        from a browser to the bucket, so this is how it reaches the pipeline
+        without the API ever having held it.
+        """
+        ...
+
+    def put_bytes(
+        self,
+        *,
+        object_key: str,
+        body: bytes,
+        content_type: str,
+    ) -> ObjectInfo:
+        """Write an object this process produced, and report what landed.
+
+        The analysis worker's write (the MIDI it transcribed). Callers always know
+        the content type of their own artifact, so unlike a browser's upload there
+        is nothing to reconcile afterwards.
+        """
+        ...
+
 
 class R2ObjectStore:
     """An :class:`ObjectStore` backed by Cloudflare R2, or anything S3-shaped."""
@@ -96,13 +123,66 @@ class R2ObjectStore:
         except ClientError as error:
             if _status_of(error) in MISSING_STATUSES:
                 return None
-            raise _unavailable() from error
+            raise _problem_for(error) from error
         except BotoCoreError as error:
             raise _unavailable() from error
 
         return ObjectInfo(
             bytes=int(response.get("ContentLength") or 0),
             content_type=_clean_content_type(response.get("ContentType")),
+            etag=_clean_etag(response.get("ETag")),
+        )
+
+    def download(self, *, object_key: str) -> bytes | None:
+        """Read an object whole, or ``None`` when the bucket does not hold it.
+
+        Whole, rather than streamed: the analysis worker needs every byte of the
+        recording before it can say anything about it, and the size ceiling is
+        already `upload_rules.MAX_UPLOAD_BYTES`. A missing object is ``None`` and
+        not an error - "the source is gone" is a job failure with a name, not a
+        broken call - while a refusal and an outage are two different problems, and
+        only one of them is worth another go.
+        """
+        self._require_configuration()
+        try:
+            response = self._client.get_object(Bucket=self._bucket, Key=object_key)
+        except ClientError as error:
+            if _status_of(error) in MISSING_STATUSES:
+                return None
+            raise _problem_for(error) from error
+        except BotoCoreError as error:
+            raise _unavailable() from error
+
+        return response["Body"].read()
+
+    def put_bytes(self, *, object_key: str, body: bytes, content_type: str) -> ObjectInfo:
+        """Write an artifact, and report the same shape a HEAD would.
+
+        The caller measures nothing: the object's size is ``len(body)``, the type is
+        the one it declared, and the ETag comes back from the bucket. Writing the
+        same key twice overwrites it, which is what makes a re-run of a pipeline
+        idempotent rather than a source of duplicates.
+
+        A refusal is translated like any other, and this is the call where it matters:
+        a bucket whose policy does not allow this content type answers 415, and that is
+        a ``storage_rejected`` - a policy to fix, not a call to retry.
+        """
+        self._require_configuration()
+        try:
+            response = self._client.put_object(
+                Bucket=self._bucket,
+                Key=object_key,
+                Body=body,
+                ContentType=content_type,
+            )
+        except ClientError as error:
+            raise _problem_for(error) from error
+        except BotoCoreError as error:
+            raise _unavailable() from error
+
+        return ObjectInfo(
+            bytes=len(body),
+            content_type=content_type,
             etag=_clean_etag(response.get("ETag")),
         )
 
@@ -176,6 +256,24 @@ def _status_of(error: ClientError) -> int:
         return int(metadata.get("HTTPStatusCode") or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _problem_for(error: ClientError) -> ApiProblem:
+    """The problem a bucket's refusal translates to.
+
+    A 4xx that is not "missing" is the bucket refusing the request itself: a content type
+    its policy does not allow, a key it will not accept. Waiting cannot change that, so it
+    gets its own code rather than the 503 that means "try again" - the two lead whoever is
+    on call to different places.
+    """
+    status = _status_of(error)
+    if 400 <= status < 500:
+        return ApiProblem(
+            HTTPStatus.BAD_GATEWAY,
+            ErrorCode.STORAGE_REJECTED,
+            "Object storage refused the request: its policy does not allow it.",
+        )
+    return _unavailable()
 
 
 def _unavailable() -> ApiProblem:

@@ -147,9 +147,16 @@ only thing that creates an object:
 ```sql
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('myband-audio', 'myband-audio', false, 209715200,
-        array['audio/mpeg', 'audio/wav'])
-on conflict (id) do nothing;
+        array['audio/mpeg', 'audio/wav', 'audio/midi'])
+on conflict (id) do update
+    set allowed_mime_types = excluded.allowed_mime_types,
+        file_size_limit = excluded.file_size_limit;
 ```
+
+`audio/midi` is there for the analysis worker, not for the browser: its MIDI artifact is
+written into the same bucket, and a storage policy is enforced on every PUT - including
+the ones the API never sees. Leaving it out produces a 415 on the worker's write, which
+surfaces as `storage_rejected` on the job (see docs/analysis-worker.md).
 
 With a real Cloudflare R2 bucket, the same code runs unchanged: drop
 `R2_ENDPOINT_URL` and `R2_REGION`, set `R2_ACCOUNT_ID` to the account id, and add a

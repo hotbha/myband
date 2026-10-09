@@ -41,15 +41,28 @@ export function SongList({ songs }: { songs: SongWithJob[] }) {
   );
 }
 
-/** Artist, size and upload date, with the missing pieces left out. */
+/** Artist, the analysis headline, and the upload's own facts, missing pieces left out. */
 function describe(song: SongWithJob): string {
   const parts = [
     song.artist,
+    song.bpm === null ? null : `${Math.round(Number(song.bpm))} BPM`,
+    song.musical_key,
+    durationOf(song),
     song.source_bytes === null ? null : formatBytes(song.source_bytes),
     song.source_content_type,
   ];
 
   return parts.filter((part): part is string => part !== null).join(" · ");
+}
+
+/** The recording's length as m:ss, or nothing at all until something has measured it. */
+function durationOf(song: SongWithJob): string | null {
+  if (song.duration_ms === null) {
+    return null;
+  }
+
+  const seconds = Math.round(song.duration_ms / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
 function statusOf(song: SongWithJob): ReactNode {

@@ -22,6 +22,7 @@ import pytest
 from app.core.config import get_settings
 from app.core.db import connect
 from app.core.ids import new_id
+from tests.fakes import FakeObjectStore
 
 TEST_DATABASE_URL = os.environ.get("MYBAND_TEST_DATABASE_URL", "")
 
@@ -65,12 +66,21 @@ def make_user(conn: psycopg.Connection) -> Callable[..., UUID]:
     No password is stored: these tests never sign in, they only need rows to own
     things. ``display_name`` lands in ``raw_user_meta_data`` the way a provider
     would send it.
+
+    ``on`` is for the one suite whose work has to be committed
+    (``test_worker_e2e.py``): its job runs on its own connections, which cannot see an
+    uncommitted row, so it creates the account on its own connection rather than
+    inventing a second way to make one.
     """
 
-    def _make(*, display_name: str | None = "Test Producer") -> UUID:
+    def _make(
+        *,
+        display_name: str | None = "Test Producer",
+        on: psycopg.Connection | None = None,
+    ) -> UUID:
         identifier = new_id()
         metadata = {"full_name": display_name} if display_name else {}
-        conn.execute(
+        (on or conn).execute(
             """
             insert into auth.users (
                 instance_id, id, aud, role, email, email_confirmed_at,
@@ -123,6 +133,36 @@ def song_id(
         (new_id(), user_id, make_object_key(name="test-song.wav")),
     ).fetchone()
     return row["id"]
+
+
+@pytest.fixture
+def store() -> FakeObjectStore:
+    """An object store that remembers what was written to it.
+
+    Here rather than in a suite because two of them need it - the upload flow and the
+    analysis worker - and pytest resolves a shared fixture by name without the test module
+    importing anything. A suite that wants a different one defines its own, which wins.
+    """
+    return FakeObjectStore()
+
+
+@pytest.fixture
+def own_queue(conn: psycopg.Connection) -> None:
+    """Leave the analysis queue holding nothing, so this test's job is the one claimed.
+
+    ``claim_next`` takes the *oldest* queued job, and these tests share a database with the
+    seed and with every upload since - without this, a test would analyse whatever was
+    already there. The sweep stays inside the rolled-back transaction, and
+    terminal-but-cancelled is a state the schema's CHECKs accept, so nothing outside the
+    test sees any of it.
+    """
+    conn.execute(
+        """
+        update public.analysis_jobs
+        set status = 'canceled', finished_at = now()
+        where status in ('queued', 'dispatched', 'running') and finished_at is null
+        """
+    )
 
 
 @pytest.fixture

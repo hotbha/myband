@@ -85,6 +85,10 @@ export const songSchema = z.object({
   title: z.string(),
   artist: z.string().nullable(),
   duration_ms: z.number().int().nullable(),
+  // The analysis headline, written by the worker. A decimal, serialised the same way
+  // `compute_seconds` is; null until a job has succeeded.
+  bpm: z.union([z.string(), z.number()]).nullable(),
+  musical_key: z.string().nullable(),
   source_object_key: z.string(),
   source_bytes: z.number().int().nullable(),
   source_content_type: z.string().nullable(),

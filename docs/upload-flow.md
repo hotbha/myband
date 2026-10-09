@@ -158,15 +158,59 @@ written into the same bucket, and a storage policy is enforced on every PUT - in
 the ones the API never sees. Leaving it out produces a 415 on the worker's write, which
 surfaces as `storage_rejected` on the job (see docs/analysis-worker.md).
 
-With a real Cloudflare R2 bucket, the same code runs unchanged: drop
-`R2_ENDPOINT_URL` and `R2_REGION`, set `R2_ACCOUNT_ID` to the account id, and add a
-bucket CORS rule allowing `PUT` from the web origin with the `Content-Type` header.
+With a real Cloudflare R2 bucket, the same code runs unchanged: drop `R2_ENDPOINT_URL`
+and `R2_REGION` and set `R2_ACCOUNT_ID` to the account id. What the bucket itself has to
+be configured with is the next section.
+
+## Required bucket configuration
+
+Three things have to be right before the first presign, in whichever bucket a deployment
+uses. All three are enforced by the *bucket*, which is the point: the API signs the PUT,
+but the write is the bucket's to allow or refuse.
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| Allowed content types | `audio/mpeg`, `audio/wav`, **`audio/midi`** | the browser uploads the first two, the analysis worker writes the third |
+| Object size limit | at least the 200 MiB cap (`209715200`) | the cap is the API's rule; a stricter bucket limit refuses a legal upload with a 403 the user can do nothing about |
+| CORS | `PUT` from the web origin, `Content-Type` allowed | the upload goes from the browser straight to the bucket, with no API in the path |
+
+### Supabase Storage and Cloudflare R2 are not the same shape
+
+Worth knowing before a deploy, because only one of them can refuse a write:
+
+- **Supabase Storage** enforces `allowed_mime_types` and `file_size_limit` on every
+  upload, and compares `allowed_mime_types` against the `Content-Type` of the PUT - which
+  is the type the API signed. That is what `upload_rules.resolve_content_type` is for:
+  a WAV declared as `audio/x-wav` or `audio/wave` is signed as `audio/wav`, so the bucket
+  never sees an alias it does not have in its list. The list above still has to contain
+  the canonical types, and `audio/midi` still has to be in it for the worker.
+- **Cloudflare R2 has no equivalent.** There is no `allowed_mime_types` and no per-bucket
+  size limit to set: the only gates are the presigned URL's own scope and the API's checks
+  (`check_object`, `resolve_content_type`), so the code is the single source of truth for
+  what may be uploaded. The flip side is that nothing else can silently start refusing the
+  worker's MIDI write, and nothing else protects the bucket either - a lifecycle rule is
+  the backstop for a stray object.
+
+The local `supabase start` stack is Supabase Storage, which is why
+`docs/analysis-worker.md` has a paragraph about the 415 the worker got from a bucket
+created without `audio/midi`: it is the one upload failure only the bucket can produce.
+
 
 ## Deliberately not here yet
 
 - **A sweeper for abandoned uploads.** `uploads.list_pending_expired` and
   `storage_gc_queue` exist for it; until it runs, an abandoned `pending` row stays
   pending and its object was never uploaded - one row, no storage.
+- **A producer and a drainer for `storage_gc_queue`.** The table, its indexes and its
+  model (`app/models/storage_gc.py`: enqueue, list_due, complete, retry) are all in place,
+  and nothing calls any of them. Nothing enqueues an object when its row is hard deleted,
+  and nothing drains the queue - so **a hard-deleted song's audio stays in the bucket
+  forever**, silently. It is a cost and retention item rather than a correctness one: once
+  the `songs` row is gone, no row references the object, so nothing can serve it. The
+  design intent is that the object is only ever *owed* a delete (enqueued in the same
+  transaction that removes the row, so a failing S3 call cannot roll back a user action),
+  which is why this is a missing worker rather than a missing mechanism. Tracked as R4 in
+  the risk register (`PRODUCTION_READINESS.md`).
 - **Checksum verification.** `checksum_expected` is recorded from the presign
   request; verifying it needs the PUT to be signed with `x-amz-checksum-sha256`,
   which presigning alone cannot arrange, so the column is filled and trusted for

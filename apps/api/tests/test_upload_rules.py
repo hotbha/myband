@@ -114,6 +114,66 @@ def test_refuses_anything_that_is_not_an_mp3_or_a_wav(extension: str, declared: 
     assert problem.code is ErrorCode.UNSUPPORTED_MEDIA_TYPE
 
 
+def test_the_workers_midi_artifact_is_not_an_upload_type() -> None:
+    """``audio/midi`` is in the bucket policy for the worker, not for the browser.
+
+    A MIDI file is something this product *produces*. Accepting one as an input would add
+    a source of audio nothing decodes, so it is refused like any other type the product
+    does not take - and it is in no alias set, which is what keeps the bucket's
+    ``allowed_mime_types`` from reading as if a browser could send one.
+    """
+    aliases = {
+        declared
+        for allowed in upload_rules.CONTENT_TYPES_BY_EXTENSION.values()
+        for declared in allowed
+    }
+
+    assert "audio/midi" not in aliases
+    for extension in ("mid", "midi"):
+        assert _rejected(upload_rules.resolve_content_type, extension, "audio/midi").status == 415
+
+
+# --- The content-type tables themselves ---------------------------------------
+
+
+def test_both_tables_describe_the_same_set_of_extensions() -> None:
+    """One decision written twice, so a key in one and not the other is a bug.
+
+    Missing from ``CANONICAL_CONTENT_TYPE`` means an accepted file cannot be signed;
+    missing from ``CONTENT_TYPES_BY_EXTENSION`` means a type nothing accepts.
+    """
+    assert set(upload_rules.CONTENT_TYPES_BY_EXTENSION) == set(upload_rules.CANONICAL_CONTENT_TYPE)
+
+
+@pytest.mark.parametrize("extension", sorted(upload_rules.CONTENT_TYPES_BY_EXTENSION))
+def test_every_alias_of_an_extension_canonicalises_to_the_same_type(extension: str) -> None:
+    """Parametrized over the table rather than over a hand-written list, so an alias
+    added to the table is covered the moment it exists."""
+    canonical = upload_rules.CANONICAL_CONTENT_TYPE[extension]
+
+    assert canonical in upload_rules.CONTENT_TYPES_BY_EXTENSION[extension]
+    for alias in sorted(upload_rules.CONTENT_TYPES_BY_EXTENSION[extension]):
+        assert upload_rules.resolve_content_type(extension, alias) == canonical
+
+
+def test_no_type_is_an_alias_of_two_extensions() -> None:
+    """A shared type would let one extension be signed as another."""
+    claimed: dict[str, str] = {}
+
+    for extension, aliases in upload_rules.CONTENT_TYPES_BY_EXTENSION.items():
+        for alias in aliases:
+            assert alias not in claimed, f"{alias} is claimed by {claimed[alias]} and {extension}"
+            claimed[alias] = extension
+
+
+def test_every_alias_is_a_well_formed_media_type() -> None:
+    """Lowercase ``type/subtype`` with no parameters: this string is signed, stored on
+    the object, and compared against the bucket's own policy."""
+    for aliases in upload_rules.CONTENT_TYPES_BY_EXTENSION.values():
+        for alias in aliases:
+            assert re.fullmatch(r"[a-z0-9.+-]+/[a-z0-9.+-]+", alias), alias
+
+
 # --- Size --------------------------------------------------------------------
 
 

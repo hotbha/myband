@@ -1,0 +1,21 @@
+# pnpm workspace definition. The Python service (apps/api) is intentionally NOT
+# a pnpm package: it is resolved by `uv` from apps/api/pyproject.toml.
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Dependency lifecycle scripts are blocked unless a package is listed here.
+# pnpm 11 removed `onlyBuiltDependencies` and `ignoredBuiltDependencies` in favor
+# of this name -> boolean map, and `strictDepBuilds` defaults to true: a package
+# that gains a build script without an entry here fails the install loudly rather
+# than executing unreviewed code.
+#
+# unrs-resolver: false - the native resolver behind the import resolution used by
+# eslint-config-next. Its platform binary already ships as an optional dependency
+# (@unrs/resolver-binding-win32-x64-msvc), so its install script is not needed.
+allowBuilds:
+  unrs-resolver: false
+
+minimumReleaseAgeExclude:
+  - concurrently@10.0.6
+  - lucide-react@1.53.0

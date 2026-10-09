@@ -1,0 +1,21 @@
+# Every text file is stored with LF endings. .prettierrc.json pins endOfLine: "lf"
+# and .editorconfig sets end_of_line = lf so editors agree.
+* text=auto eol=lf
+
+# Binary assets are never normalized.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.mp3 binary
+*.wav binary
+*.flac binary
+*.m4a binary
+
+# Generated lockfiles are text and must stay LF too.
+pnpm-lock.yaml text eol=lf
+apps/api/uv.lock text eol=lf

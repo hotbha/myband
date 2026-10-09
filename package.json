@@ -1,0 +1,36 @@
+{
+  "name": "myband",
+  "version": "0.0.0",
+  "private": true,
+  "description": "MyBand.video - music intelligence platform (BPM, key, chords, MIDI, song sections).",
+  "packageManager": "pnpm@12.10.1",
+  "engines": {
+    "node": ">=22.14.0",
+    "pnpm": ">=12.0.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c magenta,cyan \"pnpm dev:api\" \"pnpm dev:web\"",
+    "dev:web": "pnpm --filter @myband/web dev",
+    "dev:api": "uv run --project apps/api uvicorn app.main:app --reload --app-dir apps/api --host 127.0.0.1 --port 8000",
+    "build": "pnpm --filter @myband/web build",
+    "start": "pnpm --filter @myband/web start",
+    "lint": "pnpm -r --if-present lint",
+    "lint:fix": "pnpm -r --if-present lint:fix",
+    "lint:api": "uv run --project apps/api ruff check --config apps/api/pyproject.toml apps/api",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "format:api": "uv run --project apps/api ruff format --config apps/api/pyproject.toml apps/api",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test:api": "uv run --project apps/api pytest apps/api",
+    "clean": "pnpm -r --if-present clean",
+    "ui:add": "pnpm --filter @myband/web ui:add"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "concurrently": "^10.0.6",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.9",
+    "prettier-plugin-tailwindcss": "^0.8.1"
+  }
+}

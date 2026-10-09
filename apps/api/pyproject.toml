@@ -1,0 +1,48 @@
+[project]
+name = "myband-api"
+version = "0.0.0"
+description = "MyBand.video music intelligence API: BPM, key, chords, MIDI and song sections."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.143.0",
+    "uvicorn[standard]>=0.54.0",
+    "pydantic>=2.14.0",
+    "pydantic-settings>=2.15.0",
+    "python-dotenv>=1.2.4",
+    # multipart/form-data audio uploads
+    "python-multipart>=0.0.32",
+    # Supabase PostgreSQL
+    "psycopg[binary]>=3.3.6",
+    # Cloudflare R2 (S3-compatible object storage)
+    "boto3>=1.43.110",
+    "uuid6>=2025.0.1",
+    "pyjwt[crypto]>=2.10.1",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+]
+
+[tool.uv]
+# The service runs from source (uvicorn app.main:app --app-dir .); it is never
+# installed as a wheel, so `app/` stays a plain source folder.
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"

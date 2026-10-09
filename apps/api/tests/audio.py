@@ -22,6 +22,14 @@ SAMPLE_RATE = 44100
 A3, C4, E4, A4 = 220.0, 261.626, 329.628, 440.0
 C4_LOW, G4, C5 = 261.626, 392.0, 523.251
 
+# The rest of the twelve, for the chord fixtures: a triad is three notes that have to exist by
+# name before a test can claim a detector got it right.
+F3, G3, B3 = 174.614, 196.0, 246.942
+D4 = 293.665
+
+# The bottom of a bass guitar's range, for the fixture that plays an inversion.
+E2 = 82.407
+
 # What the loudest sample is scaled to: close enough to full scale to be realistic,
 # far enough from it that summing tracks cannot clip into distortion.
 PEAK = 0.9
@@ -107,6 +115,53 @@ def mix(*tracks: NDArray[np.float32]) -> NDArray[np.float32]:
     for track in tracks:
         mixed[: len(track)] += track
     return mixed
+
+
+def chord(
+    frequencies: list[float],
+    seconds: float,
+    *,
+    sample_rate: int = SAMPLE_RATE,
+    amplitude: float = 0.4,
+    decay: float = 2.5,
+) -> NDArray[np.float32]:
+    """Every frequency at once: the polyphony a *chord* detector needs to have anything to read.
+
+    ``arpeggio`` plays one note at a time, which is the right fixture for a pitch tracker. A chord
+    is notes sounding *together*, so that is what this produces - and it is why the two fixtures
+    exist side by side rather than one serving both.
+    """
+    track = np.zeros(int(sample_rate * seconds), dtype=np.float32)
+    for frequency in frequencies:
+        track += sine(frequency, seconds, sample_rate=sample_rate, amplitude=amplitude, decay=decay)
+    return track
+
+
+def progression(
+    chords: list[list[float]],
+    seconds_each: float,
+    *,
+    sample_rate: int = SAMPLE_RATE,
+) -> NDArray[np.float32]:
+    """One chord after another, each held for ``seconds_each``.
+
+    The expected answer is therefore the list that was passed in, chord for chord, which is the
+    whole point: a detector is checked against the score it was given, not against a recording
+    somebody had an opinion about.
+    """
+    return np.concatenate(
+        [chord(frequencies, seconds_each, sample_rate=sample_rate) for frequencies in chords]
+    )
+
+
+def noise(seconds: float, *, sample_rate: int = SAMPLE_RATE, seed: int = 0) -> NDArray[np.float32]:
+    """Deterministic broadband noise: the ingredient that makes a chord hard to read.
+
+    Seeded, so a test that depends on it is a test rather than a coin toss.
+    """
+    generator = np.random.default_rng(seed)
+    samples = generator.standard_normal(int(sample_rate * seconds))
+    return (samples * 0.05).astype(np.float32)
 
 
 def silence(seconds: float, *, sample_rate: int = SAMPLE_RATE) -> NDArray[np.float32]:

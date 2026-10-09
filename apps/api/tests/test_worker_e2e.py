@@ -31,7 +31,7 @@ from app.models import analysis_job, analysis_result, song
 from app.models.analysis_job import AnalysisJob
 from app.services import queue, uploads
 from app.services.storage import get_object_store
-from app.workers import analysis, midi
+from app.workers import analysis, chords, midi
 from app.workers.pipeline import Pipeline
 from botocore.config import Config
 from tests import audio
@@ -101,6 +101,7 @@ def test_an_uploaded_song_is_analysed_end_to_end(
     uploaded = recording.read_bytes()
     upload_key: str | None = None
     midi_key: str | None = None
+    chords_key: str | None = None
 
     with connect(url=TEST_DATABASE_URL) as conn:
         user_id = make_user(on=conn)
@@ -151,6 +152,7 @@ def test_an_uploaded_song_is_analysed_end_to_end(
                 song_id=song_id,
                 store=store,
                 analyze=analysis.analyze,
+                detect_chords=chords.detect_chords,
                 transcribe=midi.transcribe_with_pyin,
             )
 
@@ -185,9 +187,21 @@ def test_an_uploaded_song_is_analysed_end_to_end(
             assert analysed.musical_key == EXPECTED_KEY
 
             rows = {row.kind: row for row in analysis_result.list_for_job(conn, job_id)}
-            assert set(rows) == {"bpm", "key", "midi"}
+            assert set(rows) == {"bpm", "key", "chords", "midi"}
             assert rows["bpm"].summary["bpm"] == pytest.approx(EXPECTED_BPM, rel=0.08)
             assert rows["key"].summary["key"] == EXPECTED_KEY
+
+            # The chords, read off the same audio the tempo and key came from.
+            chords_row = rows["chords"]
+            assert chords_row.object_key is not None
+            chords_key = chords_row.object_key
+            assert chords_row.summary["detector"] == "librosa-chroma-viterbi"
+            assert chords_row.summary["segments"] > 0
+            assert "Am" in chords_row.summary["progression"]
+            chords_head = store.head(object_key=chords_key)
+            assert chords_head is not None
+            assert chords_head.bytes == chords_row.object_bytes
+            assert chords_head.content_type == "application/json"
 
             midi_row = rows["midi"]
             assert midi_row.object_key is not None
@@ -200,7 +214,7 @@ def test_an_uploaded_song_is_analysed_end_to_end(
             assert head.bytes == midi_row.object_bytes
             assert head.content_type == "audio/midi"
         finally:
-            _clean_up(conn, user_id=user_id, keys=[upload_key, midi_key])
+            _clean_up(conn, user_id=user_id, keys=[upload_key, midi_key, chords_key])
 
 
 def _clean_up(conn: psycopg.Connection, *, user_id: UUID, keys: list[str | None]) -> None:

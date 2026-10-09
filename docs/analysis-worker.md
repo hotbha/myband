@@ -1,8 +1,8 @@
 # The analysis worker
 
 The objective in one sentence: a song sitting in `analysis_jobs` as `queued` comes out of this
-process with **duration, BPM, key and a MIDI artifact** stored against it, and the job row
-says `succeeded` - or it says `failed` with a reason somebody can act on.
+process with **duration, BPM, key, a chord timeline and a MIDI artifact** stored against it, and the
+job row says `succeeded` - or it says `failed` with a reason somebody can act on.
 
 ```bash
 python -m app.workers [--once] [--max-jobs N]
@@ -29,7 +29,8 @@ stops on Ctrl-C or SIGTERM **after** the job in hand.
 txn 1   claim_next (FOR UPDATE SKIP LOCKED) -> begin: queued -> running, attempts+1,
         started_at, heartbeat_at                                        COMMIT
         ── the row lock is released here, which is what makes a live heartbeat meaningful
-work    download (GET) -> duration (file header) -> tempo -> key -> MIDI -> PUT artifact
+work    download (GET) -> duration (file header) -> tempo -> key
+        -> chords (whole song, chroma) -> MIDI (bounded window) -> PUT artifacts
         a heartbeat thread commits heartbeat_at on its own connection every 15s
 txn 2   complete: job -> succeeded + analysis_results + songs.latest_job_id
         + songs.duration_ms / bpm / musical_key                         COMMIT
@@ -49,21 +50,44 @@ while it is being worked on, which is what the UI polls for.
 | duration      | `analysis.read_duration_ms`           | from the container header, so no decode                      |
 | tempo         | `analysis.detect_tempo`               | `librosa.beat.beat_track`                                    |
 | key           | `analysis.detect_key`                 | Krumhansl-Schmuckler over `chroma_cqt`, 24 keys correlated   |
+| chords        | `chords.detect_chords`                | chroma CQT -> templates -> Viterbi, over the whole song      |
 | MIDI          | `midi.transcribe_with_pyin`           | a monophonic sketch of a bounded window (see below)          |
-| store         | `artifacts.store_midi`                | `users/<uid>/analysis/<job id>/transcription.mid`            |
+| store         | `artifacts.store_midi`, `store_chords`| `users/<uid>/analysis/<job id>/{transcription.mid,chords.json}` |
 | finish        | `queue.complete`, `song.set_analysis` | one transaction, or nothing                                  |
 
 Duration, BPM and key are **columns on `songs`** (migration 04) rather than artifacts: the
 library list reads them per row, and reading them out of `analysis_results` would be a join
-plus a jsonb extraction per song. The MIDI is an artifact, and its key satisfies
-`analysis_results_object_key_check` by construction. That key is also what the browser ends
-up fetching: `GET /songs/{id}/midi` reads the `midi` row and signs a short-lived GET for its
-`object_key` (docs/upload-flow.md), so the object the worker writes is the object the user
-downloads, with nothing in between.
+plus a jsonb extraction per song. The two payloads are artifacts, and their keys satisfy
+`analysis_results_object_key_check` by construction. A payload's key is also what the browser ends
+up reading: `GET /songs/{id}/midi` signs a short-lived GET for the `midi` row's `object_key` so the
+object the worker wrote is the object the user downloads, and `GET /songs/{id}/chords` reads the
+`chords` row's object directly and answers with the timeline (docs/upload-flow.md).
+
+**Chords are read from the audio, not from the MIDI.** The only symbolic artifact this process
+produces is a monophonic 30-second sketch whose notes are 69% in C2-C3 - it follows the bass - so it
+cannot carry harmony, and harmony is a fact about notes sounding *together*. The pipeline is
+therefore `analysis.py` (measure) -> `chroma.py` (fold the spectrum into twelve pitch classes per
+frame, over the whole song) -> `chords.py` (score every frame against every chord in
+`chord_templates.py`, then decode the most likely *sequence* of labels with a Viterbi pass and an
+explicit no-chord state). `segments.py` is the shared machinery underneath - scores to a path, a
+path to spans - because section detection will want exactly the same steps.
+
+Two decisions inside that are worth knowing before reading the code:
+
+- **Confidence-aware simplification.** The grammar is ten qualities over twelve roots (`maj`, `m`,
+  `dim`, `aug`, `sus2`, `sus4`, `maj7`, `m7`, `7`, `m7b5`, plus `/<bass>`), and a segment whose
+  confidence is below `EXTENSION_CONFIDENCE` is reported as its parent triad - `Fmaj7` as `F`,
+  `Am7` as `Am`, `Gsus4` as `G` - because a speculative seventh is a worse answer than a certain
+  triad. The wide grammar is kept in storage so a later fretboard or section feature never has to
+  rewrite a timeline that was already written.
+- **No beat or bar snapping in v1.** Segments are frame-accurate (a ~93 ms hop). Snapping would put
+  a confidently wrong downbeat on every segment instead of a slightly ragged right one, and the grid
+  a section detector would want is the one `analysis.detect_tempo` already computes.
 
 Where the code lives: `app/workers/` - `runner.py` (the loop), `pipeline.py` (one job's
-lifecycle), `stages.py` (the work, its retries and its budget), `analysis.py`, `midi.py`,
-`artifacts.py`, `heartbeat.py`, `errors.py`, `tuning.py`.
+lifecycle), `stages.py` (the work, its retries and its budget), `analysis.py`, `chroma.py`,
+`chords.py`, `chord_templates.py`, `chord_summary.py`, `segments.py`, `midi.py`, `artifacts.py`,
+`heartbeat.py`, `errors.py`, `tuning.py`.
 
 ## Measured cost
 
@@ -75,12 +99,19 @@ tracker, not the detectors, is what a job's budget is spent on:
 | duration                | ~0 ms           | header only                                     |
 | decode                  | ~0.1 s          | whole file, mono, 22.05 kHz                     |
 | tempo + key             | ~0.5 s          | the full recording                              |
+| chords (whole song)     | ~5 ms per second of audio | `chroma_cqt` + a 121-state Viterbi; ~2 s of numba compile is a one-off |
 | pYIN (hop 512)          | **14.7 s**      | ~3.7x realtime - the reason for the window      |
 | pYIN (11 kHz, hop 1024) | ~1 s per second | what `MYBAND_WORKER_MIDI_WINDOW_SECONDS` bounds |
 
 So the MIDI is transcribed from the **first `window_seconds`** (default 30) rather than the
 whole song: a monophonic sketch of the intro in tens of seconds beats a perfect transcription
 that never finishes. The window that was used is recorded in the artifact's summary.
+
+The chords are the opposite case, and that is the point of doing them here. Measured on a warm
+process, four minutes of audio costs about a second of decode-and-chroma and under a fifth of a
+second for the scoring, the Viterbi pass and the segments together - so the timeline can be built
+from the **whole song**, and it describes the track rather than its intro. The pitch tracker is
+what a job's budget actually goes on; everything else in this list is noise beside it.
 
 ## When something goes wrong
 
@@ -160,6 +191,17 @@ write. The end-to-end test found this the hard way; the fix is in
   fundamental of whatever is loudest; polyphony needs a model (see basic-pitch above).
 - **The window is the intro.** A song whose material starts later gets a MIDI file that does
   not describe it, and the summary says which window was used.
+- **The chords are a reading, not a chart.** A frame of chroma is matched against chord
+  templates, so the detector knows nothing about voicing, about inversions outside the chord's
+  own tones, or about any extended harmony beyond the ten qualities in
+  `chord_templates.py`. A passing tone or a busy arrangement blurs a frame - which is why an
+  unsure extension is reported as its triad, and why the confidence travels with every segment
+  instead of being hidden.
+- **A slash bass is the lowest strong bin of C2-C4**, a register a kick drum also occupies. The
+  note is only claimed when it is one of the chord's own tones and the segment is clear enough
+  (`SLASH_CONFIDENCE`), which removes most of the ways it can be wrong and not all of them.
+- **The timeline is frame-accurate, not bar-aligned.** It says what is played, not which bar it
+  is played in; snapping is deferred, and the grid it would use is already computed.
 - **The budget is checked between stages**, because nothing portable can interrupt a detector
   that is already running (there is no `SIGALRM` on Windows). A single pathological file can
   still overrun before it is noticed.
@@ -187,7 +229,9 @@ uv run --directory apps/api --group worker pytest
 | `test_worker_runner.py`            | nothing                              | drain-once, the job cap, the idle wait, the sweep   |
 | `test_worker_heartbeat.py`         | a database                           | the thread, and what it does when the job is gone   |
 | `test_worker_analysis.py`          | the audio group                      | 120 BPM click, A minor and C major, silence refused |
+| `test_worker_chords.py`            | the audio group                      | the four triads of a loop, an inversion, silence, the grammar |
 | `test_worker_midi.py`              | the audio group                      | a real SMF, the triad that was played, the window   |
+| `test_song_chords.py`              | a database                           | the timeline, its digest, and every refusal         |
 | `test_worker_e2e.py`               | a database, a bucket, `MYBAND_E2E=1` | the whole path: presigned PUT to rows               |
 
 The audio suites skip themselves when the `worker` group is not installed and the database

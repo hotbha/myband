@@ -143,7 +143,8 @@ protection and logout are implemented.
 | `features/auth/components/*` | Login form, Google button, logout button, inline feedback                    |
 | `app/login/page.tsx`         | Email + Google sign-in (public)                                              |
 | `app/auth/callback/route.ts` | Exchanges the OAuth/confirmation code for a session                          |
-| `app/dashboard/page.tsx`     | Protected page (`requireIdentity`) - reference for future protected routes   |
+| `app/dashboard/page.tsx`     | Protected page (`requireIdentity`) - the library, the uploader and the poller |
+| `app/songs/[id]/page.tsx`    | Protected page - one song, its analysis headline and its chord timeline       |
 
 Decisions worth knowing:
 
@@ -198,16 +199,16 @@ contracts and the error table; this is the shape of it:
 | Piece                                | Responsibility                                                         |
 | ------------------------------------ | ---------------------------------------------------------------------- |
 | `app/api/routes/uploads.py`          | `POST /uploads/presign`, `POST /uploads/complete`, `GET /uploads/{id}` |
-| `app/api/routes/songs.py`            | `GET /songs`, `GET /songs/{id}`, `GET /songs/{id}/midi`                |
+| `app/api/routes/songs.py`            | `GET /songs`, `GET /songs/{id}`, `/midi`, `/chords`                    |
 | `app/api/routes/jobs.py`             | `GET /jobs/{id}`                                                       |
 | `app/services/uploads.py`            | The lifecycle rules: what may be uploaded, and what it becomes         |
 | `app/services/storage.py`            | R2 (S3) access - presigning and HEAD - behind a protocol               |
 | `app/core/auth.py`                   | Token verification: JWKS for asymmetric keys, the secret for HS256     |
-| `features/uploads/components/*`      | The dropzone, the library list and its poller, the MIDI download       |
+| `features/uploads/components/*`      | The dropzone, the library list and its poller, the MIDI download, the chord timeline |
 | `features/uploads/jobs.ts`           | Whether a job is still in flight (the page and the poller)             |
 | `features/uploads/client-api.ts`     | Presign and complete, from the browser                                 |
 | `features/uploads/put-to-storage.ts` | The XHR PUT to storage - the only reason this app uses XHR             |
-| `features/uploads/server-api.ts`     | The library, read while the dashboard renders                          |
+| `features/uploads/server-api.ts`     | The library, one song and its chords, read while a page renders        |
 
 Decisions worth knowing:
 

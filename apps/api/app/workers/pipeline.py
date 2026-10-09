@@ -5,8 +5,8 @@ The order of what happens to a job, and the two places it is written:
 1. **claim** - lock the oldest queued job (``FOR UPDATE SKIP LOCKED``) and take it to
    ``running`` in the same transaction (:func:`queue.begin`). The attempt is counted and
    the first heartbeat stamped before any slow work starts.
-2. **work** - :class:`app.workers.stages.Stages` fetches the recording, measures it,
-   transcribes it and stores the result, with its own retries and budget.
+2. **work** - :class:`app.workers.stages.Stages` fetches the recording, measures it, reads its
+   chords, transcribes it and stores the results, with its own retries and budget.
 3. **finish** - one transaction writes the artifacts, the job row, ``songs.latest_job_id``
    and the song's ``bpm`` / ``musical_key``. Or one transaction fails the job with a
    reason and a finish time.
@@ -63,7 +63,7 @@ from app.workers.tuning import WorkerTuning
 
 if TYPE_CHECKING:
     # Typing only, so the pipeline stays importable without the audio stack installed.
-    from app.workers.stages import Analyzer, Transcriber
+    from app.workers.stages import Analyzer, ChordDetector, Transcriber
 
 log = logging.getLogger("myband.worker.pipeline")
 
@@ -88,8 +88,8 @@ class JobOutcome:
 class Pipeline:
     """Claims queued jobs and runs them through the stages, one at a time.
 
-    Every dependency is injected, and three of them are why this class can be tested
-    without a bucket, a database or the audio stack: ``analyze`` and ``transcribe`` are
+    Every dependency is injected, and the audio ones are why this class can be tested without a
+    bucket, a database or the audio stack: ``analyze``, ``detect_chords`` and ``transcribe`` are
     the only places audio is touched, and ``connect`` is the only place a transaction is.
     """
 
@@ -98,6 +98,7 @@ class Pipeline:
         *,
         store: ObjectStore,
         analyze: Analyzer,
+        detect_chords: ChordDetector,
         transcribe: Transcriber,
         connect: ConnectionFactory = db.connect,
         heartbeat_factory: Callable[..., Heartbeat] = Heartbeat,
@@ -112,6 +113,7 @@ class Pipeline:
         self._stages = Stages(
             store=store,
             analyze=analyze,
+            detect_chords=detect_chords,
             transcribe=transcribe,
             tuning=self._tuning,
             sleep=sleep,
@@ -196,7 +198,11 @@ class Pipeline:
     ) -> JobOutcome:
         """Write the result: artifacts, the job row, and the song's headline."""
         seconds = round(self._clock() - started, 3)
-        results = artifacts.build_results(analysis=produced.analysis, stored=produced.midi)
+        results = artifacts.build_results(
+            analysis=produced.analysis,
+            midi=produced.midi,
+            chords=produced.chords,
+        )
 
         with self._connect() as conn:
             finished = queue.complete(conn, job=job, results=results, compute_seconds=seconds)
@@ -224,6 +230,7 @@ class Pipeline:
                 bpm=round(produced.analysis.bpm, 2),
                 musical_key=produced.analysis.musical_key,
                 notes=produced.midi.note_count,
+                chords=produced.chords.segment_count,
                 beats=beats,
             ),
         )

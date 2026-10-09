@@ -81,6 +81,7 @@ exists.
 | GET    | `/songs/{id}`       | -                                                     | `200 {song, job}`                                      |
 | GET    | `/songs`            | `?limit=`                                             | `200 {songs: [{...song, job}]}`                        |
 | GET    | `/songs/{id}/midi`  | -                                                     | `200 {url, expires_at}`                                |
+| GET    | `/songs/{id}/chords`| -                                                     | `200 {detector, vocabulary, key, hop_ms, summary, segments}` |
 | GET    | `/jobs/{id}`        | -                                                     | `200 {job}`                                            |
 | GET    | `/health`           | -                                                     | `200 {status}`                                         |
 
@@ -145,6 +146,49 @@ What each step is for:
    MIDI, are both `analysis_not_ready` - the message distinguishes "not analysed yet"
    from "produced no MIDI file", and nothing else does. The screen already shows the
    job's status, and there is nothing to download either way.
+
+## Reading the chords back
+
+Same route shape, one deliberate difference: the API reads the object and answers with the
+timeline, because this is a screen's read rather than a file to save.
+
+```text
+Browser                FastAPI                   Postgres          Cloudflare R2
+   | 1  GET /songs/{id}/chords                                           |
+   |---------------------->|                         |                  |
+   |                       | song by id, scoped to the token's sub      |
+   |                       |------------------------>|                  |
+   |                       | songs.latest_job_id -> analysis_results    |
+   |                       |                       (kind = 'chords')   |
+   |                       |------------------------>|                  |
+   |                       | GET <object_key>                           |
+   |                       |------------------------------------------->|
+   |                       |<---------- chords.json (the whole timeline)-|
+   | 2  200 {detector, vocabulary, key, hop_ms, summary, segments}       |
+   |<----------------------|                         |                  |
+```
+
+1. **One object, named by a row.** As with the MIDI, the key comes from the job's
+   `chords` artifact rather than from the request, and the ownership check is the one
+   `GET /songs/{id}` does - unknown ids, another account's ids and soft-deleted songs
+   are all `404`.
+2. **The timeline, not a link to it.** A presigned URL would cost a second round trip
+   (the API to sign, the browser to fetch) and hand the tab a link that expires while it
+   is still on screen. The object is a few tens of kilobytes of JSON, so signing it would
+   buy nothing that reading it does not.
+3. **`summary` is the row's own digest, passed through unchanged.** The row is the
+   authority on it, so a screen that only needs "what is this song made of" never has to
+   fetch the timeline at all - and a timeline written before a digest field existed still
+   answers.
+4. **Every refusal is a `404` carrying `analysis_not_ready`.** The message is what
+   separates the three: not analysed yet, analysed with no chords, or the timeline
+   missing from the bucket. The seed's *Midnight Drive* row is the third case in
+   practice - a demo fixture whose object was never uploaded - and it is answered rather
+   than crashed on.
+
+The response contract is mirrored in `packages/shared/src/analysis.ts`, which also carries
+`segmentSchema`: the same four fields (`start_ms`, `end_ms`, `chord`, `confidence`) a
+section list will use, so one renderer serves both.
 
 ## Watching a job finish
 

@@ -160,11 +160,13 @@ def build_pipeline(*, settings: Settings | None = None) -> Pipeline:
     never installed it.
     """
     from app.workers.analysis import analyze
+    from app.workers.chords import detect_chords
     from app.workers.midi import transcribe_with_pyin
 
     return Pipeline(
         store=get_object_store(),
         analyze=analyze,
+        detect_chords=detect_chords,
         transcribe=transcribe_with_pyin,
         tuning=WorkerTuning.from_settings(settings),
     )
@@ -224,7 +226,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Parse arguments, configure logging and signals, run the loop."""
     parser = argparse.ArgumentParser(
         prog="python -m app.workers",
-        description="Analyse queued songs: duration, BPM, key and MIDI.",
+        description="Analyse queued songs: duration, BPM, key, chords and MIDI.",
     )
     parser.add_argument(
         "--once",

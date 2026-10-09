@@ -8,4 +8,5 @@
  * models are the mirror of these contracts; TypeScript is generated from the
  * FastAPI OpenAPI schema only if/when that duplication starts to hurt.
  */
+export * from "./analysis";
 export * from "./uploads";

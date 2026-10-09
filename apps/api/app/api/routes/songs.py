@@ -1,5 +1,6 @@
-"""Song routes: the library, one song's current analysis, and its MIDI."""
+"""Song routes: the library, one song's current analysis, its MIDI, and its chords."""
 
+import json
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from typing import Annotated
@@ -11,7 +12,14 @@ from app.core.db import connect
 from app.core.problems import ApiProblem, ErrorCode
 from app.models import analysis_job, analysis_result
 from app.models import song as song_model
-from app.schemas.song import MidiDownloadOut, SongListOut, SongWithJob, song_view
+from app.schemas.song import (
+    ChordsOut,
+    MidiDownloadOut,
+    SongListOut,
+    SongWithJob,
+    chords_view,
+    song_view,
+)
 from app.services import upload_rules, uploads
 from fastapi import APIRouter, Query
 
@@ -26,6 +34,9 @@ LibraryLimit = Annotated[int, Query(ge=1, le=MAX_LIBRARY_LIMIT)]
 
 # The artifact a MIDI download is a download of.
 MIDI_KIND = "midi"
+
+# The artifact a chord view is a view of.
+CHORDS_KIND = "chords"
 
 # What the file is called when the song's title leaves nothing usable, and what the
 # extension is either way. The fallback matches the object's own name in the bucket.
@@ -142,3 +153,64 @@ def download_song_midi(
     )
 
     return MidiDownloadOut(url=url, expires_at=datetime.now(UTC) + timedelta(seconds=ttl))
+
+
+@router.get("/songs/{song_id}/chords")
+def get_song_chords(
+    song_id: UUID,
+    user_id: CurrentUserId,
+    store: StorageDep,
+) -> ChordsOut:
+    """The song's chord timeline, or a 404 that says why.
+
+    The timeline itself rather than a signed link, which is the one place this differs from the MIDI
+    next door: a screen reads this, so signing a URL would cost a second round trip and hand the
+    browser a link that expires while it is still on that screen.
+
+    Every refusal is a 404 carrying ``analysis_not_ready``, because there is nothing to show either
+    way and the screen already reports the job's status. The messages differ, though, so a reader
+    can tell "not analysed yet" from "analysed, and it produced no chords" from "the object is
+    gone" - which are three different problems with three different answers.
+
+    Reading the object is the one thing this route does that the MIDI route does not: the payload is
+    the answer, so it is fetched here rather than handed to the caller as a URL to fetch.
+    """
+    with connect() as conn:
+        song = song_model.get(conn, song_id)
+        if song is None or song.user_id != user_id or song.deleted_at is not None:
+            raise ApiProblem(HTTPStatus.NOT_FOUND, ErrorCode.SONG_NOT_FOUND, "No such song.")
+
+        if song.latest_job_id is None:
+            raise ApiProblem(
+                HTTPStatus.NOT_FOUND,
+                ErrorCode.ANALYSIS_NOT_READY,
+                "This song has not been analysed yet.",
+            )
+
+        artifact = analysis_result.get_for_job_kind(
+            conn,
+            job_id=song.latest_job_id,
+            kind=CHORDS_KIND,
+        )
+        if artifact is None or artifact.object_key is None:
+            raise ApiProblem(
+                HTTPStatus.NOT_FOUND,
+                ErrorCode.ANALYSIS_NOT_READY,
+                "This song's analysis produced no chords.",
+            )
+
+        object_key = artifact.object_key
+        summary = artifact.summary
+
+    payload = store.download(object_key=object_key)
+    if payload is None:
+        # The row exists and the object does not. Reachable in practice: the seed writes a chords
+        # row for a fixture whose object was never uploaded, and a garbage-collected object leaves
+        # the same hole if it is swept before its row.
+        raise ApiProblem(
+            HTTPStatus.NOT_FOUND,
+            ErrorCode.ANALYSIS_NOT_READY,
+            "This song's chords are no longer in storage.",
+        )
+
+    return chords_view(json.loads(payload), summary)

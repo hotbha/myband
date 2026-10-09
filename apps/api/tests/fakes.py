@@ -134,6 +134,32 @@ class FakeTranscription:
     name: str = "fake-transcriber"
 
 
+@dataclass(frozen=True, slots=True)
+class FakeChordSegment:
+    """One segment, shape for shape with ``chords.ChordSegment``."""
+
+    start_ms: int = 0
+    end_ms: int = 4000
+    chord: str = "Am"
+    confidence: float = 0.9
+
+
+@dataclass(frozen=True, slots=True)
+class FakeChordTimeline:
+    """What a chord detector hands back, shape for shape. See :class:`FakeAnalysis`.
+
+    A dumb holder, exactly like the other two: the digest is derived from ``segments`` by
+    ``workers.chord_summary``, which the storage layer calls, so there is nothing here to keep in
+    step beyond the fields themselves.
+    """
+
+    segments: tuple[FakeChordSegment, ...] = (FakeChordSegment(),)
+    key: str | None = "A minor"
+    name: str = "fake-chord-detector"
+    vocabulary: str = "1.0"
+    hop_ms: int = 93
+
+
 class ScriptedStage:
     """A stage that does what the test scripted: a value, or an exception.
 

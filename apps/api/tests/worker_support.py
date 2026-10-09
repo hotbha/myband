@@ -5,9 +5,9 @@ and stand in for the bucket - are made by both ``test_worker_pipeline.py`` and
 ``test_worker_pipeline_failures.py``. Keeping them here leaves each suite to assert what it
 is actually about, the way ``tests/support.py`` does for the upload suites.
 
-The audio stack is deliberately absent: the analyzer and the transcriber are scripted, so
-these suites need no librosa, no real recording and no bucket - and a stage failure becomes
-something a test can ask for exactly, instead of something it has to provoke.
+The audio stack is deliberately absent: the analyzer, the chord detector and the transcriber are
+scripted, so these suites need no librosa, no real recording and no bucket - and a stage failure
+becomes something a test can ask for exactly, instead of something it has to provoke.
 """
 
 from collections.abc import Callable, Iterator
@@ -24,6 +24,7 @@ from app.workers.pipeline import Pipeline
 from app.workers.tuning import WorkerTuning
 from tests.fakes import (
     FakeAnalysis,
+    FakeChordTimeline,
     FakeObjectStore,
     FakeTranscription,
     NullHeartbeat,
@@ -70,6 +71,7 @@ def worker(conn: psycopg.Connection, store: FakeObjectStore, **overrides: object
     return Pipeline(
         store=store,
         analyze=overrides.pop("analyze", ScriptedStage(FakeAnalysis())),
+        detect_chords=overrides.pop("detect_chords", ScriptedStage(FakeChordTimeline())),
         transcribe=overrides.pop("transcribe", ScriptedStage(FakeTranscription())),
         connect=transactions(conn),
         heartbeat_factory=NullHeartbeat,

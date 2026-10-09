@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
 
 import type { SongWithJob } from "@myband/shared";
 
-import { formatBytes } from "../file-rules";
+import { describeSong } from "../song-summary";
 import { DownloadMidiButton } from "./download-midi-button";
 import { JobStatusBadge } from "./job-status-badge";
 
@@ -19,6 +20,10 @@ import { JobStatusBadge } from "./job-status-badge";
  * job succeeded can have an artifact, and the button that asks for one is hidden until
  * there could be something to hand over. The button itself is the only client component
  * on this line - it does nothing until it is clicked.
+ *
+ * The title is the link to the song's own page, which is where the chords are: a timeline
+ * is far too much to draw inline in a list, and a row is a pointer to a song rather than
+ * the song itself.
  */
 export function SongList({ songs }: { songs: SongWithJob[] }) {
   if (songs.length === 0) {
@@ -34,9 +39,14 @@ export function SongList({ songs }: { songs: SongWithJob[] }) {
       {songs.map((song) => (
         <li key={song.id} className="flex items-center justify-between gap-4 p-4">
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium">{song.title}</p>
+            <Link
+              href={`/songs/${song.id}`}
+              className="truncate text-sm font-medium underline-offset-2 hover:underline"
+            >
+              {song.title}
+            </Link>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              {describe(song)} ·{" "}
+              {describeSong(song)} ·{" "}
               <time dateTime={song.created_at}>{song.created_at.slice(0, 10)}</time>
             </p>
           </div>
@@ -48,30 +58,6 @@ export function SongList({ songs }: { songs: SongWithJob[] }) {
       ))}
     </ul>
   );
-}
-
-/** Artist, the analysis headline, and the upload's own facts, missing pieces left out. */
-function describe(song: SongWithJob): string {
-  const parts = [
-    song.artist,
-    song.bpm === null ? null : `${Math.round(Number(song.bpm))} BPM`,
-    song.musical_key,
-    durationOf(song),
-    song.source_bytes === null ? null : formatBytes(song.source_bytes),
-    song.source_content_type,
-  ];
-
-  return parts.filter((part): part is string => part !== null).join(" · ");
-}
-
-/** The recording's length as m:ss, or nothing at all until something has measured it. */
-function durationOf(song: SongWithJob): string | null {
-  if (song.duration_ms === null) {
-    return null;
-  }
-
-  const seconds = Math.round(song.duration_ms / 1000);
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
 function statusOf(song: SongWithJob): ReactNode {

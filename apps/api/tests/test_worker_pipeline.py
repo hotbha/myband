@@ -13,6 +13,7 @@ have happened fails an assertion instead of leaking into the next test.
 Needs a migrated database; see ``test_schema.py`` for the environment.
 """
 
+import json
 import os
 from collections.abc import Callable
 from dataclasses import replace
@@ -23,7 +24,7 @@ import psycopg
 import pytest
 from app.models import analysis_job, analysis_result, song
 from app.workers import artifacts
-from tests.fakes import FakeAnalysis, FakeObjectStore, FakeTranscription
+from tests.fakes import FakeAnalysis, FakeChordTimeline, FakeObjectStore, FakeTranscription
 from tests.worker_support import queued, worker
 
 pytestmark = pytest.mark.skipif(
@@ -98,21 +99,41 @@ def test_the_artifacts_describe_themselves(
     make_object_key: Callable[..., str],
     own_queue: None,
 ) -> None:
-    """Three kinds of row, and a MIDI object the row and the bucket agree about.
+    """The rows a succeeded job writes, and the two objects the rows and the bucket agree about.
 
-    The MIDI row's ``object_key`` satisfying ``analysis_results_object_key_check`` is part of
-    the assertion: the insert would have been refused otherwise, so the key shape is verified
-    against the database rather than against a copy of its regex.
+    The artifacts' ``object_key``s satisfying ``analysis_results_object_key_check`` is part of the
+    assertion: the insert would have been refused otherwise, so the key shapes are verified against
+    the database rather than against a copy of its regex.
     """
     job = queued(conn, store, user_id=user_id, song_id=song_id, make_object_key=make_object_key)
 
     worker(conn, store).run_once()
 
     rows = {row.kind: row for row in analysis_result.list_for_job(conn, job.id)}
-    assert set(rows) == {"bpm", "key", "midi"}
+    assert set(rows) == {"bpm", "key", "chords", "midi"}
 
     assert rows["bpm"].summary == {"bpm": 120.0, "beats": 16}
     assert rows["key"].summary == {"key": "A minor", "strength": 0.9}
+
+    chords = rows["chords"]
+    assert chords.object_key == artifacts.chords_object_key(user_id=user_id, job_id=job.id)
+    assert chords.object_bytes == len(artifacts.encode_chords(FakeChordTimeline()))
+    assert chords.object_content_type == "application/json"
+    assert chords.summary == {
+        "detector": "fake-chord-detector",
+        "vocabulary": "1.0",
+        "key": "A minor",
+        "segments": 1,
+        "progression": ["Am"],
+        "confidence": 0.9,
+        "no_chord_ratio": 0.0,
+    }
+
+    timeline = json.loads(store.download(object_key=chords.object_key))
+    assert timeline["key"] == "A minor"
+    assert timeline["segments"] == [
+        {"start_ms": 0, "end_ms": 4000, "chord": "Am", "confidence": 0.9}
+    ]
 
     midi = rows["midi"]
     assert midi.object_key == artifacts.midi_object_key(user_id=user_id, job_id=job.id)
@@ -157,5 +178,5 @@ def test_a_second_pass_over_a_finished_job_writes_nothing(
 
     assert second.status == "lost"
     assert analysis_result.list_for_job(conn, job.id) == after_first
-    assert len(store.bodies) == 2  # the source audio and one MIDI, not a second copy
+    assert len(store.bodies) == 3  # the source audio, one MIDI, one chord timeline
     assert analysis_job.get(conn, job.id).finished_at == finished.finished_at

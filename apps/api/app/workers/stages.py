@@ -1,4 +1,4 @@
-"""The work one job does: fetch the recording, measure it, transcribe it, store it.
+"""The work one job does: fetch it, measure it, read its chords, transcribe it, store it.
 
 Kept apart from the pipeline that claims and finishes a job because the two answer
 different questions. This module is *what the work costs and how it fails*;
@@ -17,8 +17,8 @@ Three policies live here, and each one is deliberate:
 * **The temp file.** The decoders take paths, so the download is written to one and
   removed when the stages are done, whatever happened.
 
-``analyze`` and ``transcribe`` are injected, and are the only places audio is touched.
-That is what lets every policy above be tested without audio, a bucket or a database.
+``analyze``, ``detect_chords`` and ``transcribe`` are injected, and are the only places audio is
+touched. That is what lets every policy above be tested without audio, a bucket or a database.
 """
 
 from __future__ import annotations
@@ -49,9 +49,11 @@ if TYPE_CHECKING:
     # Typing only: this module must stay importable - and testable - on a machine that
     # never installed the audio stack.
     from app.workers.analysis import AudioAnalysis
+    from app.workers.chords import ChordTimeline
     from app.workers.midi import Transcription
 
     Analyzer = Callable[[Path], AudioAnalysis]
+    ChordDetector = Callable[..., ChordTimeline]
     Transcriber = Callable[..., Transcription]
 
 log = logging.getLogger("myband.worker.stages")
@@ -61,10 +63,11 @@ StageResult = TypeVar("StageResult")
 
 @dataclass(frozen=True, slots=True)
 class Produced:
-    """What the stages made: the headline, and where the MIDI landed."""
+    """What the stages made: the headline, and where the two payloads landed."""
 
     analysis: AudioAnalysis
     midi: artifacts.StoredMidi
+    chords: artifacts.StoredChords
 
 
 class Stages:
@@ -75,6 +78,7 @@ class Stages:
         *,
         store: ObjectStore,
         analyze: Analyzer,
+        detect_chords: ChordDetector,
         transcribe: Transcriber,
         tuning: WorkerTuning,
         sleep: Callable[[float], None] = time.sleep,
@@ -82,6 +86,7 @@ class Stages:
     ) -> None:
         self._store = store
         self._analyze = analyze
+        self._detect_chords = detect_chords
         self._transcribe = transcribe
         self._tuning = tuning
         self._sleep = sleep
@@ -116,11 +121,21 @@ class Stages:
                 attempt += 1
 
     def _stages(self, job: AnalysisJob) -> Produced:
-        """The work proper: download, measure, transcribe, store."""
+        """The work proper: download, measure, read the chords, transcribe, store.
+
+        The chords are read *before* the pitch tracker runs, and the order is deliberate: they are
+        seconds of work and the tracker is the stage that spends a job's whole budget, so the
+        cheap answer is in hand before the expensive one can overrun.
+        """
         audio = self._download(job)
 
         with _as_file(audio, job.source_object_key) as path:
             analysis = self._stage(job, "analysis", lambda: self._analyze(path))
+            timeline = self._stage(
+                job,
+                "chords",
+                lambda: self._detect_chords(path, key=analysis.musical_key),
+            )
             transcription = self._stage(
                 job,
                 "transcription",
@@ -131,7 +146,8 @@ class Stages:
                 ),
             )
 
-        midi = self._stage(job, "store", lambda: self._store_midi(job, transcription))
+        midi = self._stage(job, "store_midi", lambda: self._store_midi(job, transcription))
+        chords = self._stage(job, "store_chords", lambda: self._store_chords(job, timeline))
 
         log.info(
             "analysis produced",
@@ -141,9 +157,10 @@ class Stages:
                 bpm=round(analysis.bpm, 2),
                 musical_key=analysis.musical_key,
                 notes=midi.note_count,
+                chords=chords.segment_count,
             ),
         )
-        return Produced(analysis=analysis, midi=midi)
+        return Produced(analysis=analysis, midi=midi, chords=chords)
 
     def _stage(
         self,
@@ -197,6 +214,22 @@ class Stages:
                 user_id=job.user_id,
                 job_id=job.id,
                 transcription=transcription,
+            )
+        except ApiProblem as error:
+            raise _as_failure(error) from error
+
+    def _store_chords(
+        self,
+        job: AnalysisJob,
+        timeline: ChordTimeline,
+    ) -> artifacts.StoredChords:
+        """Put the chord timeline in the bucket, translating its refusal the way a read is."""
+        try:
+            return artifacts.store_chords(
+                self._store,
+                user_id=job.user_id,
+                job_id=job.id,
+                timeline=timeline,
             )
         except ApiProblem as error:
             raise _as_failure(error) from error

@@ -8,6 +8,7 @@ returned with a flag the UI has to remember to honour.
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from app.models.analysis_job import AnalysisJob
@@ -76,6 +77,53 @@ class MidiDownloadOut(BaseModel):
     expires_at: datetime
 
 
+class ChordSegmentOut(BaseModel):
+    """One chord, held for a stretch of the song (``GET /songs/{id}/chords``).
+
+    Four fields, and the same four a *section* will arrive with - a start, an end, a label and how
+    sure the detector was - so one renderer and one shared schema can serve both. ``chord`` is a
+    label from the product's closed vocabulary, or ``"N"`` where nothing was played.
+    """
+
+    start_ms: int
+    end_ms: int
+    chord: str
+    confidence: float
+
+
+class ChordsOut(BaseModel):
+    """A song's chord timeline (``GET /songs/{id}/chords``).
+
+    The timeline itself rather than a link to it, which is the one place this differs from the MIDI
+    next door: a screen reads this, so signing a URL would cost a second round trip and hand the
+    browser a link that expires while it is still displayed.
+
+    ``summary`` is the digest the worker wrote into ``analysis_results``, passed through unchanged
+    so that the row and the response can never describe different things.
+
+    ``duration_ms`` is deliberately absent: it belongs to ``songs``, the last segment already ends
+    at it, and a second copy of the same number is how two copies drift apart.
+    """
+
+    detector: str
+    vocabulary: str
+    key: str | None
+    hop_ms: int
+    summary: dict[str, Any]
+    segments: list[ChordSegmentOut]
+
+
 def song_view(song: Song, job: AnalysisJob | None) -> SongWithJob:
     """Build the API's view of a song and the job that is current for it."""
     return SongWithJob(**SongOut.model_validate(song).model_dump(), job=job)
+
+
+def chords_view(payload: dict[str, Any], summary: dict[str, Any]) -> ChordsOut:
+    """The API's view of a stored chord timeline: what the worker wrote, plus its digest.
+
+    The stored object is the authority on the timeline and the row is the authority on the digest,
+    so this joins the two rather than recomputing either. The payload's own keys are splatted in,
+    which means a stored timeline missing a field this contract promises fails loudly here instead
+    of reaching a browser as ``undefined``.
+    """
+    return ChordsOut(**payload, summary=summary)

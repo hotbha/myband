@@ -14,7 +14,6 @@ Needs a migrated database; see ``tests/test_schema.py`` for the environment.
 
 import os
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
 from uuid import UUID
 
 import psycopg
@@ -27,7 +26,7 @@ from app.main import create_app
 from app.services.storage import get_object_store
 from fastapi.testclient import TestClient
 from tests.fakes import FakeObjectStore
-from tests.support import start
+from tests.support import reuse_connection, start
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("MYBAND_TEST_DATABASE_URL"),
@@ -35,16 +34,6 @@ pytestmark = pytest.mark.skipif(
 )
 
 MAX_BYTES = 200 * 1024 * 1024
-
-
-@contextmanager
-def _reuse(conn: psycopg.Connection) -> Iterator[psycopg.Connection]:
-    """Hand a route the test's connection instead of letting it open its own.
-
-    The route still believes it owns the transaction; the ``conn`` fixture rolls
-    that transaction back, so nothing the API wrote outlives the test.
-    """
-    yield conn
 
 
 @pytest.fixture
@@ -63,7 +52,7 @@ def client(
 ) -> Iterator[TestClient]:
     """The API, on the test's transaction, signed in as ``user_id``."""
     for module in (uploads_routes, songs_routes, jobs_routes):
-        monkeypatch.setattr(module, "connect", lambda **_: _reuse(conn))
+        monkeypatch.setattr(module, "connect", lambda **_: reuse_connection(conn))
 
     app = create_app()
     app.dependency_overrides[current_user_id] = lambda: user_id

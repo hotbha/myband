@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.errors import handle_problem, handle_validation_error
-from app.api.routes import health, jobs, songs, uploads
+from app.api.routes import health, jobs, metrics, songs, uploads
 from app.core.config import get_settings
 from app.core.problems import ApiProblem
 
@@ -19,10 +19,16 @@ def create_app() -> FastAPI:
     """Build the application: CORS, error shape, routes."""
     settings = get_settings()
 
+    # The interactive docs are a development convenience and a production liability:
+    # /openapi.json publishes every route, including the operator one. A deployed API
+    # serves neither, and app/api/routes/metrics.py refuses anything without a token.
     app = FastAPI(
         title="MyBand.video API",
         version=settings.pipeline_version,
         description="Music intelligence for uploaded audio: BPM, key, chords, MIDI, song sections.",
+        docs_url=None if settings.is_production else "/docs",
+        redoc_url=None if settings.is_production else "/redoc",
+        openapi_url=None if settings.is_production else "/openapi.json",
     )
 
     # The browser calls this API directly with the user's Supabase token, so CORS
@@ -44,6 +50,7 @@ def create_app() -> FastAPI:
     app.include_router(uploads.router)
     app.include_router(songs.router)
     app.include_router(jobs.router)
+    app.include_router(metrics.router)
 
     return app
 

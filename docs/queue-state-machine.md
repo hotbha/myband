@@ -118,8 +118,8 @@ where song_id = $1 and deleted_at is null
 order by created_at desc;
 ```
 
-The same grouped counts, plus the per-user view, are exposed by
-`GET /admin/metrics`; see [schema.md](schema.md) for the columns and
-[analysis-worker.md](analysis-worker.md) for what the worker does with a job it
-holds.
+The same grouped counts, and the ages that go with them, are exposed by
+`GET /admin/metrics` (see `app/api/routes/metrics.py`; the token is
+`MYBAND_METRICS_TOKEN`). [schema.md](schema.md) has the columns, and
+[analysis-worker.md](analysis-worker.md) has what the worker does with a job it holds.
 

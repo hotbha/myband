@@ -141,6 +141,14 @@ class Settings(BaseSettings):
         default=30, ge=5, le=600, validation_alias="MYBAND_WORKER_MIDI_WINDOW_SECONDS"
     )
 
+    # --- Operations ---
+    # The shared secret for GET /admin/metrics, which is an operator endpoint rather than
+    # part of the product: it authenticates with this token, not with a Supabase session
+    # (app/api/routes/metrics.py). Empty means the endpoint is published to a local
+    # development run only - everywhere else it answers 404 - so a deployment that never
+    # sets this cannot accidentally expose its queue.
+    metrics_token: SecretStr = Field(default=SecretStr(""), validation_alias="MYBAND_METRICS_TOKEN")
+
     @property
     def cors_origin_list(self) -> list[str]:
         """``MYBAND_CORS_ORIGINS`` split into a list for CORSMiddleware."""

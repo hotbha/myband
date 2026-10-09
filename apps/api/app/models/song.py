@@ -36,6 +36,14 @@ class Song(Record):
     deleted_at: datetime | None
 
 
+@dataclass(frozen=True, slots=True)
+class LibraryStats:
+    """How much the platform holds, as opposed to what it is doing."""
+
+    songs: int
+    song_owners: int
+
+
 def _clean(value: str | None, *, limit: int) -> str | None:
     """Trim, drop empties and cap the length, so a column CHECK cannot fire."""
     if value is None:
@@ -111,6 +119,25 @@ def list_for_user(
         (user_id, limit),
     ).fetchall()
     return [Song.from_row(row) for row in rows]
+
+
+def library_stats(conn: psycopg.Connection) -> LibraryStats:
+    """How many songs the platform holds, and how many accounts own at least one.
+
+    Deliberately about the library rather than about accounts: this API knows songs,
+    and ``count(distinct user_id)`` answers "how many people have uploaded something"
+    without reading the auth schema that owns users.
+    """
+    row = conn.execute(
+        """
+        select
+            count(*) as songs,
+            count(distinct user_id) as song_owners
+        from public.songs
+        where deleted_at is null
+        """
+    ).fetchone()
+    return LibraryStats(songs=row["songs"], song_owners=row["song_owners"])
 
 
 def set_latest_job(

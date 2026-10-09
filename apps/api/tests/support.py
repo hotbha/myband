@@ -11,7 +11,8 @@ suites drive jobs through the queue and both have to cope with the queue holding
 rows that are not theirs.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from uuid import UUID
 
@@ -77,6 +78,16 @@ def refused(call: Callable[..., object], *args: object, **kwargs: object) -> Api
     with pytest.raises(ApiProblem) as raised:
         call(*args, **kwargs)
     return raised.value
+
+
+@contextmanager
+def reuse_connection(conn: psycopg.Connection) -> Iterator[psycopg.Connection]:
+    """Hand a route the test's connection instead of letting it open its own.
+
+    The route still believes it owns the transaction; the ``conn`` fixture rolls that
+    transaction back, so nothing the API wrote outlives the test.
+    """
+    yield conn
 
 
 def claim_own_job(conn: psycopg.Connection, *, song_id: UUID) -> AnalysisJob:

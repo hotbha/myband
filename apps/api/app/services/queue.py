@@ -295,7 +295,7 @@ def reap_stale(
             expected_status=stale.status,
             status="failed",
             finished_at=now,
-            error_code="stale",
+            error_code=analysis_job.STALE_ERROR_CODE,
             error_message=(
                 f"no heartbeat for {int(older_than.total_seconds())}s; the worker is assumed dead"
             ),

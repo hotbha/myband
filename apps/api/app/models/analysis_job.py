@@ -8,7 +8,7 @@ the queue service owns the transaction boundary.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -33,6 +33,14 @@ HEARTBEAT_STATUSES = ("dispatched", "running")
 
 # As SQL text, in the same literal style as `_STATUS_LIST`.
 _HEARTBEAT_LIST = "'dispatched', 'running'"
+
+# What the sweep writes in `error_code` when it decides a worker is dead. Here rather
+# than in the queue service because it is a value this table's column holds, and both
+# the service that writes it and the metrics query that counts it read it from here.
+STALE_ERROR_CODE = "stale"
+
+# How far back "recently" reaches in `queue_stats`, unless the caller says otherwise.
+ACTIVITY_WINDOW = timedelta(hours=1)
 
 # Terminal statuses. Nothing moves a job out of these - a retry is a new row -
 # and `transition` refuses to even try, so a late worker cannot resurrect one.
@@ -76,6 +84,32 @@ class AnalysisJob(Record):
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class QueueStats:
+    """One query's worth of "what is the queue doing".
+
+    Counts are of live rows: a soft-deleted job is not work anybody is waiting for, so
+    it is not part of the picture. The ages are what a dashboard actually alerts on - a
+    queue depth only means something next to how long the oldest job in it has been
+    sitting there.
+    """
+
+    observed_at: datetime
+    window: timedelta
+    queued: int
+    dispatched: int
+    running: int
+    succeeded: int
+    failed: int
+    canceled: int
+    in_flight: int
+    oldest_queued_seconds: float | None
+    oldest_in_flight_seconds: float | None
+    finished_recently: int
+    failed_recently: int
+    reaped_recently: int
 
 
 def insert(
@@ -242,6 +276,74 @@ def list_stale_active(
         (before, limit),
     ).fetchall()
     return [AnalysisJob.from_row(row) for row in rows]
+
+
+def queue_stats(
+    conn: psycopg.Connection,
+    *,
+    window: timedelta = ACTIVITY_WINDOW,
+) -> QueueStats:
+    """Counts by status, plus the ages and recent activity an operator needs.
+
+    One statement: every number here is this table scanned the same way, and a metrics
+    call should not be four round trips. ``now()`` is the database's clock, so the ages
+    and the "recently" window are measured on the server holding the rows rather than on
+    whatever clock the caller happens to have - which is what makes ``window=0`` a
+    deterministic way to count nothing as recent.
+
+    ``oldest_queued_seconds`` and ``oldest_in_flight_seconds`` are ``None`` when nothing
+    is in that state. That is the good news this exists to report: no queued job means
+    the dispatcher is keeping up, and nothing in flight means no worker is holding
+    anything.
+    """
+    row = conn.execute(
+        """
+        select
+            now() as observed_at,
+            count(*) filter (where status = 'queued') as queued,
+            count(*) filter (where status = 'dispatched') as dispatched,
+            count(*) filter (where status = 'running') as running,
+            count(*) filter (where status = 'succeeded') as succeeded,
+            count(*) filter (where status = 'failed') as failed,
+            count(*) filter (where status = 'canceled') as canceled,
+            count(*) filter (where status in ('dispatched', 'running')) as in_flight,
+            extract(
+                epoch from now() - min(created_at) filter (where status = 'queued')
+            )::float8 as oldest_queued_seconds,
+            extract(
+                epoch from now() - min(
+                    coalesce(heartbeat_at, started_at, dispatched_at)
+                ) filter (where status in ('dispatched', 'running'))
+            )::float8 as oldest_in_flight_seconds,
+            count(*) filter (where finished_at > now() - %s) as finished_recently,
+            count(*) filter (
+                where finished_at > now() - %s and status = 'failed'
+            ) as failed_recently,
+            count(*) filter (
+                where finished_at > now() - %s and error_code = %s
+            ) as reaped_recently
+        from public.analysis_jobs
+        where deleted_at is null
+        """,
+        # The window is passed once per filter, in the order the filters appear.
+        (window, window, window, STALE_ERROR_CODE),
+    ).fetchone()
+    return QueueStats(
+        observed_at=row["observed_at"],
+        window=window,
+        queued=row["queued"],
+        dispatched=row["dispatched"],
+        running=row["running"],
+        succeeded=row["succeeded"],
+        failed=row["failed"],
+        canceled=row["canceled"],
+        in_flight=row["in_flight"],
+        oldest_queued_seconds=row["oldest_queued_seconds"],
+        oldest_in_flight_seconds=row["oldest_in_flight_seconds"],
+        finished_recently=row["finished_recently"],
+        failed_recently=row["failed_recently"],
+        reaped_recently=row["reaped_recently"],
+    )
 
 
 def touch_heartbeat(

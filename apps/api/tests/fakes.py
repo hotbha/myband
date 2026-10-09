@@ -17,15 +17,17 @@ class FakeObjectStore:
     """An in-memory object store.
 
     ``presign_put`` returns a URL that names the key it signed, which is enough for
-    a test to see that the key was derived from the caller. ``put`` stands in for
-    the browser's upload; ``put_bytes`` and ``download`` are the worker's own write
-    and read, so a pipeline test can seed the source audio and then look at what the
-    analysis stored without either side knowing about the other.
+    a test to see that the key was derived from the caller. ``presign_get`` does the
+    same for a download link. ``put`` stands in for the browser's upload;
+    ``put_bytes`` and ``download`` are the worker's own write and read, so a pipeline
+    test can seed the source audio and then look at what the analysis stored without
+    either side knowing about the other.
     """
 
     def __init__(self) -> None:
         self.objects: dict[str, ObjectInfo] = {}
         self.presigned: list[dict[str, object]] = []
+        self.presigned_gets: list[dict[str, object]] = []
         self.bodies: dict[str, bytes] = {}
 
     def presign_put(self, *, object_key: str, content_type: str, expires_in: int) -> str:
@@ -33,6 +35,21 @@ class FakeObjectStore:
             {"object_key": object_key, "content_type": content_type, "expires_in": expires_in}
         )
         return f"{PRESIGN_BASE_URL}/{object_key}?X-Amz-Expires={expires_in}"
+
+    def presign_get(
+        self,
+        *,
+        object_key: str,
+        expires_in: int,
+        filename: str | None = None,
+    ) -> str:
+        """Remember the download link a caller asked for, and answer with one."""
+        self.presigned_gets.append(
+            {"object_key": object_key, "expires_in": expires_in, "filename": filename}
+        )
+        return (
+            f"{PRESIGN_BASE_URL}/{object_key}?X-Amz-Expires={expires_in}&X-Amz-SignedHeaders=host"
+        )
 
     def head(self, *, object_key: str) -> ObjectInfo | None:
         return self.objects.get(object_key)
@@ -83,6 +100,11 @@ class FakeObjectStore:
     def last_presigned(self) -> dict[str, object]:
         """What the most recent ``presign_put`` was asked for."""
         return self.presigned[-1]
+
+    @property
+    def last_presigned_get(self) -> dict[str, object]:
+        """What the most recent ``presign_get`` was asked for."""
+        return self.presigned_gets[-1]
 
 
 @dataclass(frozen=True, slots=True)

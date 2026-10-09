@@ -1,7 +1,9 @@
 import {
   completeResponseSchema,
+  midiDownloadSchema,
   presignResponseSchema,
   type CompleteResponse,
+  type MidiDownload,
   type PresignResponse,
 } from "@myband/shared";
 
@@ -63,5 +65,25 @@ export async function completeUpload(input: {
       body: { upload_id: input.uploadId, title: input.title },
     },
     completeResponseSchema,
+  );
+}
+
+/**
+ * Ask for a short-lived link to the song's MIDI (`GET /songs/{id}/midi`).
+ *
+ * A link, not the file: the object is private, so the API checks that this caller owns
+ * the song and only then signs a URL for it. That URL is meant to be *navigated* to -
+ * the bucket is what answers, and it answers with the file - so nothing here fetches the
+ * MIDI itself. Which is also why this is called on a click rather than when the list
+ * renders: the link is good for minutes, and its TTL is the point.
+ */
+export async function requestMidiDownload(songId: string): Promise<MidiDownload> {
+  return apiFetch(
+    {
+      path: `/songs/${songId}/midi`,
+      baseUrl: baseUrl(),
+      token: await getAccessToken(),
+    },
+    midiDownloadSchema,
   );
 }

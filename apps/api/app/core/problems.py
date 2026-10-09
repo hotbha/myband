@@ -41,6 +41,10 @@ class ErrorCode(StrEnum):
     SONG_NOT_FOUND = "song_not_found"
     JOB_NOT_FOUND = "job_not_found"
     PROJECT_NOT_FOUND = "project_not_found"
+    # A song that exists and may have been analysed, but has no artifact to hand over
+    # yet: no finished job, or a finished one that produced no artifact of that kind.
+    # Distinct from JOB_NOT_FOUND, which is about a job id the caller named.
+    ANALYSIS_NOT_READY = "analysis_not_ready"
 
     # --- Our side ---
     STORAGE_UNAVAILABLE = "storage_unavailable"

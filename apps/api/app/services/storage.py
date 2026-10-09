@@ -58,6 +58,27 @@ class ObjectStore(Protocol):
         """A URL the browser can PUT this one object to, and nothing else."""
         ...
 
+    def presign_get(
+        self,
+        *,
+        object_key: str,
+        expires_in: int,
+        filename: str | None = None,
+    ) -> str:
+        """A URL the browser can GET this one object from, and nothing else.
+
+        The download side of :meth:`presign_put`. Objects are private, so a link the
+        user can click has to carry its own authorization: short-lived, scoped to one
+        key, and produced only after the caller was checked against the row that owns
+        the object.
+
+        ``filename`` is what the browser saves the file as. Set as a response header
+        on the object rather than trusted to the ``download`` attribute, which a
+        browser ignores for a cross-origin URL - and this URL is always another
+        origin, because it is the bucket.
+        """
+        ...
+
     def head(self, *, object_key: str) -> ObjectInfo | None:
         """What the bucket holds at ``object_key``, or ``None`` when nothing does."""
         ...
@@ -112,6 +133,31 @@ class R2ObjectStore:
         return self._client.generate_presigned_url(
             "put_object",
             Params={"Bucket": self._bucket, "Key": object_key, "ContentType": content_type},
+            ExpiresIn=expires_in,
+        )
+
+    def presign_get(
+        self,
+        *,
+        object_key: str,
+        expires_in: int,
+        filename: str | None = None,
+    ) -> str:
+        """Sign a GET for exactly one key.
+
+        ``ResponseContentDisposition`` is part of the signature's params rather than a
+        header we serve: the download is a request between the browser and the bucket,
+        and this service is not in it. The name is quoted and ASCII-stripped by the
+        caller, so the header it becomes is one a browser can parse.
+        """
+        self._require_configuration()
+        params: dict[str, Any] = {"Bucket": self._bucket, "Key": object_key}
+        if filename:
+            params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
+
+        return self._client.generate_presigned_url(
+            "get_object",
+            Params=params,
             ExpiresIn=expires_in,
         )
 

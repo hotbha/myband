@@ -177,6 +177,9 @@ rejected.
 - `unique (job_id, kind)` makes writing idempotent: re-running a pipeline upserts
   instead of duplicating, which is why the API writes with
   `on conflict (job_id, kind) do update`.
+- `midi` is the one kind the API serves to a browser: `GET /songs/{id}/midi` reads it
+  and signs a short-lived GET for its `object_key` rather than handing out the key
+  itself ([upload-flow.md](upload-flow.md)). The other kinds have no route yet.
 - `user_id` is denormalised from the job **and** tied to it by a composite foreign
   key `(job_id, user_id) -> analysis_jobs(id, user_id)`. That is what makes the
   select policy a plain column comparison with no join, and simultaneously makes it

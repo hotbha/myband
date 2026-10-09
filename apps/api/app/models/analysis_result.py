@@ -136,3 +136,25 @@ def list_for_job(conn: psycopg.Connection, job_id: UUID) -> list[AnalysisResult]
         (job_id,),
     ).fetchall()
     return [AnalysisResult.from_row(row) for row in rows]
+
+
+def get_for_job_kind(
+    conn: psycopg.Connection,
+    *,
+    job_id: UUID,
+    kind: str,
+) -> AnalysisResult | None:
+    """One artifact of one job, or ``None`` when that job did not produce it.
+
+    ``unique (job_id, kind)`` makes this at most one row, so a download link is fetched
+    by naming exactly what it is for rather than by taking the newest of a set.
+    """
+    row = conn.execute(
+        """
+        select *
+        from public.analysis_results
+        where job_id = %s and kind = %s
+        """,
+        (job_id, kind),
+    ).fetchone()
+    return None if row is None else AnalysisResult.from_row(row)

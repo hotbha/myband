@@ -124,6 +124,20 @@ export const apiProblemSchema = z.object({
   detail: z.object({ code: z.string(), message: z.string() }),
 });
 
+/**
+ * Where to fetch a song's MIDI (`GET /songs/{id}/midi`).
+ *
+ * A signed URL rather than the file, with the same shape of trust as the upload's:
+ * short-lived, scoped to one object, and fetched when the user asks for it. The link
+ * carries its own authorization, so nothing stores it.
+ */
+export const midiDownloadSchema = z.object({
+  url: z.url(),
+  expires_at: timestamp,
+});
+
+export type MidiDownload = z.infer<typeof midiDownloadSchema>;
+
 export type UploadStatus = z.infer<typeof uploadStatusSchema>;
 export type JobStatus = z.infer<typeof jobStatusSchema>;
 export type Upload = z.infer<typeof uploadSchema>;

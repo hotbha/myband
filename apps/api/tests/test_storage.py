@@ -18,6 +18,11 @@ from botocore.exceptions import ClientError
 BUCKET = "myband-audio"
 ENDPOINT_OVERRIDE = "http://127.0.0.1:54321/storage/v1/s3"
 OBJECT_KEY = "users/018f2f3a-1111-7000-8000-000000000001/uploads/track.mp3"
+# The shape a MIDI artifact has: `workers.artifacts.midi_object_key`.
+MIDI_KEY = (
+    "users/018f2f3a-1111-7000-8000-000000000001"
+    "/analysis/018f2f3a-2222-7000-8000-000000000002/transcription.mid"
+)
 
 
 class StubS3:
@@ -163,6 +168,46 @@ def test_presigning_signs_one_key_with_the_type_and_the_expiry() -> None:
             "Params": {"Bucket": BUCKET, "Key": OBJECT_KEY, "ContentType": "audio/mpeg"},
             "ExpiresIn": 3600,
         }
+    ]
+
+
+def test_presigning_a_download_signs_one_key_and_names_the_file() -> None:
+    """The GET is scoped to one key, and the saved name travels with the signature.
+
+    ``ResponseContentDisposition`` is a *param*, not a header we serve: the download is a
+    conversation between the browser and the bucket, so the name has to be inside the
+    thing being signed or it does not happen at all.
+    """
+    client = StubS3()
+
+    url = R2ObjectStore(_settings(), client=client).presign_get(
+        object_key=MIDI_KEY,
+        expires_in=300,
+        filename="Midnight Drive.mid",
+    )
+
+    assert url.startswith("https://bucket.test/signed")
+    assert client.calls == [
+        {
+            "operation": "get_object",
+            "Params": {
+                "Bucket": BUCKET,
+                "Key": MIDI_KEY,
+                "ResponseContentDisposition": 'attachment; filename="Midnight Drive.mid"',
+            },
+            "ExpiresIn": 300,
+        }
+    ]
+
+
+def test_a_download_with_no_name_asks_for_no_override() -> None:
+    """Absent rather than empty: an empty disposition header is not a header."""
+    client = StubS3()
+
+    R2ObjectStore(_settings(), client=client).presign_get(object_key=MIDI_KEY, expires_in=60)
+
+    assert client.calls == [
+        {"operation": "get_object", "Params": {"Bucket": BUCKET, "Key": MIDI_KEY}, "ExpiresIn": 60}
     ]
 
 

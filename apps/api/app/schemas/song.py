@@ -60,6 +60,22 @@ class SongListOut(BaseModel):
     songs: list[SongWithJob]
 
 
+class MidiDownloadOut(BaseModel):
+    """Where to fetch a song's MIDI (``GET /songs/{id}/midi``).
+
+    A URL rather than the file: the object is private, so this service signs a
+    short-lived link for it, and the browser fetches from the bucket - the same rule the
+    upload follows in the other direction.
+
+    ``expires_at`` comes from this service's clock while the URL carries the bucket's own
+    ``X-Amz-Expires``. They agree because both are derived from
+    ``MYBAND_DOWNLOAD_URL_TTL_SECONDS``, and the bucket's is the one that is enforced.
+    """
+
+    url: str
+    expires_at: datetime
+
+
 def song_view(song: Song, job: AnalysisJob | None) -> SongWithJob:
     """Build the API's view of a song and the job that is current for it."""
     return SongWithJob(**SongOut.model_validate(song).model_dump(), job=job)

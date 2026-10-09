@@ -56,7 +56,10 @@ while it is being worked on, which is what the UI polls for.
 Duration, BPM and key are **columns on `songs`** (migration 04) rather than artifacts: the
 library list reads them per row, and reading them out of `analysis_results` would be a join
 plus a jsonb extraction per song. The MIDI is an artifact, and its key satisfies
-`analysis_results_object_key_check` by construction.
+`analysis_results_object_key_check` by construction. That key is also what the browser ends
+up fetching: `GET /songs/{id}/midi` reads the `midi` row and signs a short-lived GET for its
+`object_key` (docs/upload-flow.md), so the object the worker writes is the object the user
+downloads, with nothing in between.
 
 Where the code lives: `app/workers/` - `runner.py` (the loop), `pipeline.py` (one job's
 lifecycle), `stages.py` (the work, its retries and its budget), `analysis.py`, `midi.py`,

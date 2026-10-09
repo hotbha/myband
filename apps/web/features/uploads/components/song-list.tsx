@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { SongWithJob } from "@myband/shared";
 
 import { formatBytes } from "../file-rules";
+import { DownloadMidiButton } from "./download-midi-button";
 import { JobStatusBadge } from "./job-status-badge";
 
 /**
@@ -13,6 +14,11 @@ import { JobStatusBadge } from "./job-status-badge";
  * "has this ever been analysed", the same distinction
  * `apps/api/app/schemas/song.py` documents. Reading it here costs nothing: it is a
  * column on the row the list already has.
+ *
+ * It is also what gates the MIDI download, and for the same reason: only a song whose
+ * job succeeded can have an artifact, and the button that asks for one is hidden until
+ * there could be something to hand over. The button itself is the only client component
+ * on this line - it does nothing until it is clicked.
  */
 export function SongList({ songs }: { songs: SongWithJob[] }) {
   if (songs.length === 0) {
@@ -34,7 +40,10 @@ export function SongList({ songs }: { songs: SongWithJob[] }) {
               <time dateTime={song.created_at}>{song.created_at.slice(0, 10)}</time>
             </p>
           </div>
-          {statusOf(song)}
+          <div className="flex shrink-0 items-start gap-3">
+            {statusOf(song)}
+            {song.latest_job_id ? <DownloadMidiButton songId={song.id} title={song.title} /> : null}
+          </div>
         </li>
       ))}
     </ul>

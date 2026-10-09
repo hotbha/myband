@@ -93,6 +93,16 @@ class Settings(BaseSettings):
         le=604800,
         validation_alias="MYBAND_UPLOAD_URL_TTL_SECONDS",
     )
+    # How long a presigned GET stays valid (the MIDI download link). Much shorter than
+    # the upload's clock on purpose: an upload has to survive a slow connection, while a
+    # download link only has to survive the click that follows the response that carried
+    # it. It is also the only thing authorizing the read - the URL *is* the credential.
+    download_url_ttl_seconds: int = Field(
+        default=300,
+        ge=30,
+        le=3600,
+        validation_alias="MYBAND_DOWNLOAD_URL_TTL_SECONDS",
+    )
 
     # --- GPU workers (RunPod) ---
     runpod_api_key: SecretStr = Field(default=SecretStr(""), validation_alias="RUNPOD_API_KEY")

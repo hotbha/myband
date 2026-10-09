@@ -4,8 +4,10 @@ import type { SongWithJob } from "@myband/shared";
 
 import { LogoutButton } from "@/features/auth/components/logout-button";
 import { requireIdentity } from "@/features/auth/session";
+import { LibraryRefresh } from "@/features/uploads/components/library-refresh";
 import { SongList } from "@/features/uploads/components/song-list";
 import { UploadDropzone } from "@/features/uploads/components/upload-dropzone";
+import { hasWorkInFlight } from "@/features/uploads/jobs";
 import { fetchLibrary } from "@/features/uploads/server-api";
 import { messageFor } from "@/lib/api";
 
@@ -22,8 +24,9 @@ export const metadata: Metadata = {
  *
  * The library is read on the server, in the same request that renders it: one round
  * trip to the API, no loading spinner, and nothing for the browser to fetch on
- * mount. The uploader is the only client component, and it refreshes this page when
- * it has queued a job.
+ * mount. Two client components sit on top of it - the uploader, which refreshes the page
+ * when it has queued a job, and the poller, which refreshes it while a job is in flight.
+ * Neither of them owns a row.
  */
 export default async function DashboardPage() {
   const identity = await requireIdentity("/dashboard");
@@ -44,7 +47,12 @@ export default async function DashboardPage() {
       <UploadDropzone />
 
       <section className="space-y-4">
-        <h2 className="text-lg font-medium">Library</h2>
+        <div className="flex items-baseline justify-between gap-4">
+          <h2 className="text-lg font-medium">Library</h2>
+          {/* Renders nothing but the status line it is worth: while a worker holds a
+              job, the list below is a snapshot that will be wrong shortly. */}
+          {library.ok ? <LibraryRefresh active={hasWorkInFlight(library.songs)} /> : null}
+        </div>
         {library.ok ? (
           <SongList songs={library.songs} />
         ) : (

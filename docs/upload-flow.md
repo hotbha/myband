@@ -80,6 +80,7 @@ exists.
 | GET    | `/uploads/{id}`     | -                                                     | `200 {upload}`                                         |
 | GET    | `/songs/{id}`       | -                                                     | `200 {song, job}`                                      |
 | GET    | `/songs`            | `?limit=`                                             | `200 {songs: [{...song, job}]}`                        |
+| GET    | `/songs/{id}/midi`  | -                                                     | `200 {url, expires_at}`                                |
 | GET    | `/jobs/{id}`        | -                                                     | `200 {job}`                                            |
 | GET    | `/health`           | -                                                     | `200 {status}`                                         |
 
@@ -97,11 +98,76 @@ FastAPI's own request-validation failures:
 | 422    | `invalid_request`, `invalid_filename`                                      | body or filename cannot be accepted               |
 | 413    | `file_too_large`                                                           | declared or actual size over 200 MiB              |
 | 415    | `unsupported_media_type`                                                   | not mp3/wav, by extension or by actual MIME       |
-| 404    | `upload_not_found`, `song_not_found`, `job_not_found`, `project_not_found` | unknown, or not the caller's                      |
+| 404    | `upload_not_found`, `song_not_found`, `job_not_found`, `project_not_found`, `analysis_not_ready` | unknown, not the caller's, or nothing to hand over yet |
 | 409    | `upload_not_pending`, `object_not_found`, `object_empty`                   | wrong state, or the PUT never happened            |
 | 410    | `upload_expired`                                                           | `expires_at` has passed                           |
 | 503    | `storage_unavailable`, `auth_unavailable`                                  | R2 or the JWKS endpoint is unreachable            |
 | 500    | `server_misconfigured`                                                     | a required setting is missing                     |
+
+## Getting the MIDI back
+
+The same flow, in the other direction, and deliberately the same shape: the artifact is
+private, so the browser never learns its key and the API is only ever asked for a link.
+
+```text
+Browser                FastAPI                   Postgres          Cloudflare R2
+   | 1  GET /songs/{id}/midi                                             |
+   |---------------------->|                         |                  |
+   |                       | song by id, scoped to the token's sub      |
+   |                       |------------------------>|                  |
+   |                       | songs.latest_job_id -> analysis_results    |
+   |                       |                       (kind = 'midi')     |
+   | 2  200 {url, expires_at}                        |                  |
+   |<----------------------|                         |                  |
+   | 3  navigate to <url>                                               |
+   |------------------------------------------------------------------->|
+   |<--------- 200 MIDI + Content-Disposition: attachment; filename=... -|
+```
+
+What each step is for:
+
+1. **One object, named by a row.** The key comes from the job's `midi` artifact, never
+   from the request, so a caller cannot name an object at all. The ownership check is the
+   one `GET /songs/{id}` does: unknown ids, another account's ids and soft-deleted songs
+   are all `404`.
+2. **A link, not the bytes - and not a redirect.** The signed URL is scoped to one key,
+   one method and an expiry (`MYBAND_DOWNLOAD_URL_TTL_SECONDS`, default 300 - much
+   shorter than the upload's, because the link only has to survive the click that follows
+   the response and the URL *is* the credential). A `302` would be followed by the
+   `fetch`, which would leave the client holding the MIDI in memory instead of the user
+   holding a file.
+3. **The bucket names the file.** `ResponseContentDisposition` is part of the signature,
+   so the object arrives as `attachment; filename="<title>.mid"`. An anchor's `download`
+   attribute is ignored for a cross-origin URL, and this URL is always another origin, so
+   the header is the only place that can say it. The title is user input, so it is
+   sanitised to the object key's own alphabet before it becomes a header.
+4. **Every other outcome is a `404`.** No finished job, or a finished job that stored no
+   MIDI, are both `analysis_not_ready` - the message distinguishes "not analysed yet"
+   from "produced no MIDI file", and nothing else does. The screen already shows the
+   job's status, and there is nothing to download either way.
+
+## Watching a job finish
+
+The dashboard renders the library on the server, in the request that asked for it, so the
+list is a snapshot: right when it was drawn, wrong the moment a worker finishes. Nothing
+pushes - there is no websocket and no SSE, and neither is worth standing up for four short
+states, one of which a user usually sees for a second. So while any song in the list has a
+job in `queued`, `dispatched` or `running`, the page re-runs its own Server Component every
+five seconds (`features/uploads/components/library-refresh.tsx`). That is the same
+`GET /songs` the page already made, and the same `router.refresh()` the uploader calls when
+it has queued a job: no subscription, no second source of truth, nothing held in the tab.
+
+It stops on its own, and it is the API's answer that stops it. The first refresh that comes
+back with nothing in flight ends the polling, because that is the state being shown rather
+than a stopwatch kept in the browser; a hidden tab skips its refresh; and after fifteen
+minutes - the worker's own job timeout, and the lease the sweep uses - it stops asking and
+offers a button instead. Work still unfinished after that is a question for
+`GET /admin/metrics` and the queries in [queue-state-machine.md](queue-state-machine.md),
+not one the page can answer.
+
+`features/uploads/jobs.ts` is where "in flight" is defined for the browser. It mirrors
+`analysis_job.ACTIVE_STATUSES`, and it is a plain module rather than part of the poller so
+that the dashboard - a Server Component - can decide with the same answer.
 
 ## Invariants this flow keeps
 
@@ -118,6 +184,9 @@ FastAPI's own request-validation failures:
   new song.
 - The API never sees an audio byte. It signs a URL and afterwards confirms what
   landed; the object's size and MIME are the bucket's answer, not the browser's.
+- A download link is built from rows the caller owns, not from the request: the key
+  comes from the job's artifact, the expiry from configuration, and the filename from
+  the song's title. No route takes an object key from a browser in either direction.
 
 ## Running it locally
 
@@ -221,3 +290,11 @@ created without `audio/midi`: it is the one upload failure only the bucket can p
 - **The dispatcher.** Jobs stay `queued` until the RunPod worker loop lands; the
   queue service it will call is already written and tested
   (`app/services/queue.py`).
+- **A download for anything but the MIDI.** `analysis_results` holds `bpm`, `key`
+  and `chords` rows as well, and none of them has a route: tempo and key are read
+  from the `songs` row's headline columns, and chords have no screen yet. The
+  signing is now general - `presign_get` takes any key - so each is a route and a
+  schema away rather than a piece of machinery.
+- **Ranged or streamed reads.** A link fetches the whole object. Playing the
+  recording in a `<audio>` element from the bucket would want a range-capable URL and
+  an expiry sized for a listening session, not for the click that follows a response.

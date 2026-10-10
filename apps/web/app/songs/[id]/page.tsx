@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 import type { Chords, SongWithJob } from "@myband/shared";
 
 import { requireIdentity } from "@/features/auth/session";
-import { ChordProgression, ChordTimeline } from "@/features/uploads/components/chord-timeline";
+import { ChordTimeline } from "@/features/uploads/components/chord-timeline";
 import { DownloadMidiButton } from "@/features/uploads/components/download-midi-button";
 import { JobStatusBadge } from "@/features/uploads/components/job-status-badge";
 import { fetchChords, fetchSong } from "@/features/uploads/server-api";
@@ -26,7 +26,8 @@ export const metadata: Metadata = {
  *
  * The timeline has three states and they are deliberately different on screen:
  *
- * * **loaded** - the timeline, the chords the song is made of, and the detector's own confidence.
+ * * **loaded** - the timeline, the chords the song is made of, and how sure the detector was, with
+ *   the toggle between its two readings inside `ChordTimeline`.
  * * **pending** - the API answered `analysis_not_ready`: the song exists and nothing has produced
  *   chords for it yet. That is a fact about a job, not a failure, and it is not dressed as one.
  * * **failed** - anything else. A song that is not this caller's, or is deleted, is a real 404 and
@@ -71,15 +72,7 @@ export default async function SongPage({ params }: { params: Promise<{ id: strin
         <h2 className="text-lg font-medium">Chords</h2>
 
         {chords.kind === "loaded" ? (
-          <>
-            <p className="text-xs text-muted-foreground">
-              Read from the recording by {chords.chords.detector}, bar by bar
-              {chords.chords.key ? ` in ${chords.chords.key}` : ""}. Times are when each chord
-              starts; the number on the right is how sure the detector was.
-            </p>
-            <ChordProgression chords={chords.chords} />
-            <ChordTimeline chords={chords.chords} />
-          </>
+          <ChordTimeline chords={chords.chords} />
         ) : (
           <Notice message={chords.message} tone={chords.kind === "pending" ? "muted" : "error"} />
         )}

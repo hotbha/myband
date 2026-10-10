@@ -14,6 +14,7 @@ from uuid import UUID
 from app.models.analysis_job import AnalysisJob
 from app.models.song import Song
 from app.schemas.analysis_job import AnalysisJobOut
+from app.workers import chord_summary
 from pydantic import BaseModel, ConfigDict
 
 
@@ -80,14 +81,22 @@ class MidiDownloadOut(BaseModel):
 class ChordSegmentOut(BaseModel):
     """One chord, held for a stretch of the song (``GET /songs/{id}/chords``).
 
-    Four fields, and the same four a *section* will arrive with - a start, an end, a label and how
-    sure the detector was - so one renderer and one shared schema can serve both. ``chord`` is a
-    label from the product's closed vocabulary, or ``"N"`` where nothing was played.
+    Five fields, four of which are the shape a *section* will arrive with - a start, an end, a label
+    and how sure the detector was - so one renderer and one shared schema can serve both. ``chord``
+    is a label from the product's closed vocabulary, or ``"N"`` where nothing was played.
+
+    ``label_simple`` is that same chord as its triad: ``workers.chord_summary.simplify_label``
+    applied to ``chord``, derived per response rather than stored, because the object in the bucket
+    is the record of what was *detected* and this is the reading of it a screen shows by default.
+    The two differ on a row where the detector heard an extension or an inversion, which is the only
+    row with anything to disclose - and the browser can compare two fields without knowing a thing
+    about chord grammar, or what a seventh is.
     """
 
     start_ms: int
     end_ms: int
     chord: str
+    label_simple: str
     confidence: float
 
 
@@ -101,6 +110,11 @@ class ChordsOut(BaseModel):
     ``summary`` is the digest the worker wrote into ``analysis_results``, passed through unchanged
     so that the row and the response can never describe different things.
 
+    Nothing is added to it for the simple view. The digest is the worker's statement about what it
+    detected, and how much of the recording that accounts for; ``progression_simple`` and
+    ``coverage_simple`` are *this* contract's own reading of the same timeline one level coarser, so
+    they sit beside the summary rather than inside it.
+
     ``duration_ms`` is deliberately absent: it belongs to ``songs``, the last segment already ends
     at it, and a second copy of the same number is how two copies drift apart.
     """
@@ -110,12 +124,34 @@ class ChordsOut(BaseModel):
     key: str | None
     hop_ms: int
     summary: dict[str, Any]
+    # How much of the recording the chords on the card account for, and the same for the simplified
+    # spelling of them: a card covering 92% of a recording is a description of it, and one covering
+    # 59% is a list of its landmarks. Derived from the timeline rather than stored, because both
+    # describe a labelling the worker never wrote - and a stored copy of a derived number is how two
+    # copies of it drift apart.
+    coverage: float
+    progression_simple: list[str]
+    coverage_simple: float
     segments: list[ChordSegmentOut]
 
 
 def song_view(song: Song, job: AnalysisJob | None) -> SongWithJob:
     """Build the API's view of a song and the job that is current for it."""
     return SongWithJob(**SongOut.model_validate(song).model_dump(), job=job)
+
+
+def _ranked(value: Any) -> tuple[str, ...]:
+    """The digest's own progression, as a tuple of labels, when the row holds one.
+
+    Read rather than recomputed: the worker ranked those chords by how much of the song each
+    occupies, and a second ranking here would be a second answer to the same question. A timeline
+    written before the field existed has none, which leaves the coverage beside it measuring nothing
+    - the card that would show both is not rendered either.
+    """
+    if not isinstance(value, list):
+        return ()
+
+    return tuple(chord for chord in value if isinstance(chord, str))
 
 
 def chords_view(payload: dict[str, Any], summary: dict[str, Any]) -> ChordsOut:
@@ -125,5 +161,26 @@ def chords_view(payload: dict[str, Any], summary: dict[str, Any]) -> ChordsOut:
     so this joins the two rather than recomputing either. The payload's own keys are splatted in,
     which means a stored timeline missing a field this contract promises fails loudly here instead
     of reaching a browser as ``undefined``.
+
+    Two things here are derived rather than stored, and they are the same timeline read one level
+    coarser: each row's ``label_simple``, and the card that reading produces - the same ranking the
+    digest is built with, over the simplified labels, so the simple card is a restatement of this
+    timeline rather than a hand-written summary of it that could drift from it. A label that is not
+    a chord at all (``NO_CHORD``) simplifies to itself, so a rest stays a rest in both readings.
     """
-    return ChordsOut(**payload, summary=summary)
+    segments = [
+        ChordSegmentOut(**segment, label_simple=chord_summary.simplify_label(segment["chord"]))
+        for segment in payload["segments"]
+    ]
+    simple = [segment.model_copy(update={"chord": segment.label_simple}) for segment in segments]
+    ranked_simple = chord_summary.progression(simple)
+
+    return ChordsOut(
+        **{**payload, "segments": segments},
+        summary=summary,
+        # Each card is measured against the reading it was ranked from - the detected spellings for
+        # the digest's ranking, the triads for the one derived here.
+        coverage=chord_summary.coverage(segments, _ranked(summary.get("progression"))),
+        progression_simple=list(ranked_simple),
+        coverage_simple=chord_summary.coverage(simple, ranked_simple),
+    )

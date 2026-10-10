@@ -46,7 +46,7 @@ above leaves open.
 
 **Storage**
 
-- [ ] The bucket exists with the CORS and content-type settings in [upload-flow.md](docs/upload-flow.md), `audio/midi` included
+- [ ] The bucket exists with the CORS and content-type settings in [upload-flow.md](docs/upload-flow.md), `audio/midi` and `application/json` included
 - [ ] An R2 lifecycle rule covers stray objects (R4, R5)
 - [ ] R2 credentials are scoped to this bucket, and rotating them is a documented step
 

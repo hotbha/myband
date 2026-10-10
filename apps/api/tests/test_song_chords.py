@@ -55,6 +55,23 @@ TIMELINE = FakeChordTimeline(
     key="A minor",
 )
 
+# A timeline that takes more than one reading: a seventh, a sus and a slash bass, each played
+# beside its own triad, and a second of silence. Seven spellings the detector was sure of, and
+# four chords underneath them.
+SIMPLIFIABLE = FakeChordTimeline(
+    segments=(
+        FakeChordSegment(start_ms=0, end_ms=3000, chord="Am", confidence=0.77),
+        FakeChordSegment(start_ms=3000, end_ms=4000, chord="Am7", confidence=0.66),
+        FakeChordSegment(start_ms=4000, end_ms=5500, chord="Fmaj7", confidence=0.71),
+        FakeChordSegment(start_ms=5500, end_ms=6000, chord="F", confidence=0.83),
+        FakeChordSegment(start_ms=6000, end_ms=7000, chord="Gsus4", confidence=0.69),
+        FakeChordSegment(start_ms=7000, end_ms=7500, chord="G", confidence=0.88),
+        FakeChordSegment(start_ms=7500, end_ms=8500, chord="C/E", confidence=0.81),
+        FakeChordSegment(start_ms=8500, end_ms=10000, chord="N", confidence=0.2),
+    ),
+    key="A minor",
+)
+
 
 @pytest.fixture
 def client(
@@ -84,12 +101,15 @@ def _analyse(
     source_key: str,
     with_chords: bool = True,
     with_object: bool = True,
+    timeline: FakeChordTimeline = TIMELINE,
 ) -> UUID:
     """Take a song to a succeeded job the way the worker does, and return the job id.
 
     ``with_chords=False`` is what a job analysed before this artifact existed produces.
     ``with_object`` is what the seed leaves behind: a chords row whose object was never uploaded,
     which the route has to answer for rather than fail on.
+    ``timeline`` is the detector's own output, for the tests that are about reading one back rather
+    than about the job that wrote it.
     """
     outcome = queue.enqueue(
         conn,
@@ -115,7 +135,7 @@ def _analyse(
             store,
             user_id=user_id,
             job_id=running.id,
-            timeline=TIMELINE,
+            timeline=timeline,
         ),
     )
 
@@ -161,9 +181,14 @@ def test_an_analysed_song_hands_back_its_chord_timeline(
     assert body["key"] == "A minor"
     assert body["hop_ms"] == 93
     assert body["segments"] == [
-        {"start_ms": 0, "end_ms": 1000, "chord": "N", "confidence": 0.2},
-        {"start_ms": 1000, "end_ms": 5000, "chord": "Am", "confidence": 0.91},
+        {"start_ms": 0, "end_ms": 1000, "chord": "N", "label_simple": "N", "confidence": 0.2},
+        {"start_ms": 1000, "end_ms": 5000, "chord": "Am", "label_simple": "Am", "confidence": 0.91},
     ]
+    # Nothing here was an extension, so both readings of this timeline agree: one chord on the card,
+    # and the same four seconds of a five-second recording accounted for either way.
+    assert body["progression_simple"] == ["Am"]
+    assert body["coverage"] == 0.8
+    assert body["coverage_simple"] == 0.8
 
     # Not a presigned link, and nothing that expires - the one way this differs from the MIDI route.
     assert "url" not in body
@@ -171,6 +196,67 @@ def test_an_analysed_song_hands_back_its_chord_timeline(
     assert store.presigned_gets == []
     # And no second copy of a number that belongs to the song rather than to the artifact.
     assert "duration_ms" not in body
+
+
+def test_the_simple_view_is_the_api_reading_the_same_labels_more_coarsely(
+    client: TestClient,
+    store: FakeObjectStore,
+    conn: psycopg.Connection,
+    user_id: UUID,
+    song_id: UUID,
+    make_object_key: Callable[..., str],
+) -> None:
+    """Every row carries its triad beside the detector's own label, and the two cards differ.
+
+    The card is what this is about. Ranked as detected, the six places a card has go on two
+    spellings of A minor and two of F, and account for 80% of the recording; ranked as triads, four
+    chords account for 85%. Both are read off the same timeline, and the digest still holds the
+    detector's own ranking - this view is the response's, not something the worker wrote.
+    """
+    job_id = _analyse(
+        conn,
+        store,
+        user_id=user_id,
+        song_id=song_id,
+        source_key=make_object_key(name="source.wav"),
+        timeline=SIMPLIFIABLE,
+    )
+    row = analysis_result.get_for_job_kind(conn, job_id=job_id, kind="chords")
+    assert row is not None
+
+    body = client.get(f"/songs/{song_id}/chords").json()
+
+    assert [segment["chord"] for segment in body["segments"]] == [
+        "Am",
+        "Am7",
+        "Fmaj7",
+        "F",
+        "Gsus4",
+        "G",
+        "C/E",
+        "N",
+    ]
+    # Each row's triad beside it, a rest included - a rest is not a chord with an extension.
+    assert [segment["label_simple"] for segment in body["segments"]] == [
+        "Am",
+        "Am",
+        "F",
+        "F",
+        "G",
+        "G",
+        "C",
+        "N",
+    ]
+
+    # The digest: unchanged, and still the ranking the worker measured.
+    assert body["summary"] == row.summary
+    assert body["summary"]["progression"] == ["Am", "Fmaj7", "Am7", "C/E", "Gsus4", "F"]
+    assert body["coverage"] == 0.8
+
+    # The simple card: the same ranking over the triads, so its six places hold four chords and
+    # account for more of the recording than the six spellings did.
+    assert body["progression_simple"] == ["Am", "F", "G", "C"]
+    assert body["coverage_simple"] == 0.85
 
 
 def test_the_summary_is_the_stored_row_and_not_a_recomputation(

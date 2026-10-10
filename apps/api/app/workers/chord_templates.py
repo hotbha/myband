@@ -1,29 +1,28 @@
-"""The chord vocabulary: which labels exist, and the chroma each one looks like.
+"""The chord vocabulary's chroma: what each label looks like, and the states built from it.
 
-Two things live here and nothing else. **Which chords this product can name** - a closed
-grammar of ``(root, quality)`` pairs, spelled in the same twelve pitch-class names
-``analysis.KEY_NAMES`` uses, so a key and a chord root are never two spellings of one pitch
-class. And **what each of them looks like as a chroma vector**, which is the only thing a
-detector can score a frame against.
+**What each chord looks like as a chroma vector**, which is the only thing a detector can score a
+frame against, and the scoring helpers over the ``(root, quality)`` states that follow from it. The
+states are spelled in the same twelve pitch-class names ``analysis.KEY_NAMES`` uses, so a key and a
+chord root are never two spellings of one pitch class.
 
-The quality list is deliberately wider than what v1 confidently emits: a seventh or a sus is
-*stored* when the detector is sure of it, and simplified to its parent triad when it is not
-(:func:`parent_state`). Keeping the grammar wide now is what stops a later fretboard or
-section feature from having to rewrite timelines that were already written to R2.
+The *names* - which suffixes exist, the intervals each one stands for, and the triad each one
+degrades to when a frame is not clear enough to justify it - live in
+:mod:`app.workers.chord_summary` and are imported above. They moved there because the API reads a
+stored timeline back as its simple view, and a module that assembles a chroma matrix with numpy at
+import time is not one the API can import. What is left here is the chroma: the part that genuinely
+needs numpy, and the only thing a score can be taken against.
 
-The weights are the whole of the musical knowledge in this module, and they say one thing:
+The weights below are the whole of the musical knowledge in this module, and they say one thing:
 the root is what a listener actually hears, and a seventh is the weakest evidence of the
 four - which is why it is the first thing dropped when a frame is ambiguous.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import numpy as np
 from numpy.typing import NDArray
 
-from app.workers.chord_summary import NO_CHORD
+from app.workers.chord_summary import QUALITIES, QUALITY_INDEX, Quality
 
 # The twelve spellings, in the order the chroma columns are laid out. Identical to
 # `analysis.KEY_NAMES`, and shared vocabulary on purpose: a chord's root and a song's
@@ -60,37 +59,10 @@ INTERVAL_WEIGHTS: dict[int, float] = {
 }
 
 
-@dataclass(frozen=True, slots=True)
-class Quality:
-    """One chord quality: its suffix, its intervals, and the triad it degrades to.
-
-    ``parent`` is the suffix of the simpler chord this one becomes when a frame is not
-    clear enough to justify the extension - ``maj7`` to ``""`` (Fmaj7 becomes F), ``m7``
-    to ``"m"`` (Am7 becomes Am), ``sus4`` to ``""`` (Gsus4 becomes G). A quality that is
-    already a triad is its own parent, so an ``aug`` is never quietly renamed.
-    """
-
-    suffix: str
-    intervals: tuple[int, ...]
-    parent: str
-
-
-# The grammar, in the order states are laid out. Every label the product can emit or
-# store is one of these, with an optional "/<bass>" after it.
-QUALITIES: tuple[Quality, ...] = (
-    Quality("", (0, 4, 7), ""),
-    Quality("m", (0, 3, 7), "m"),
-    Quality("dim", (0, 3, 6), "dim"),
-    Quality("aug", (0, 4, 8), "aug"),
-    Quality("sus2", (0, 2, 7), ""),
-    Quality("sus4", (0, 5, 7), ""),
-    Quality("maj7", (0, 4, 7, 11), ""),
-    Quality("m7", (0, 3, 7, 10), "m"),
-    Quality("7", (0, 4, 7, 10), ""),
-    Quality("m7b5", (0, 3, 6, 10), "dim"),
-)
-
-QUALITY_INDEX: dict[str, int] = {quality.suffix: index for index, quality in enumerate(QUALITIES)}
+# The grammar itself - the suffixes, the intervals and the parents - is imported from
+# `app.workers.chord_summary` above, and is deliberately wider than what v1 confidently emits:
+# a seventh or a sus is stored when the detector is sure of it, and degraded by `parent_state`
+# when it is not. What is left in this module is the chroma those names are scored as.
 
 # One state per (root, quality), in that nesting order. The no-chord state is not one of
 # these: it is appended after them by whoever scores a frame, because it has no template.
@@ -217,23 +189,3 @@ def states_for_key(key: str | None) -> tuple[frozenset[int], frozenset[int]]:
 
     diatonic = frozenset(state for state in every if root_of(state) in roots)
     return diatonic, every - diatonic
-
-
-def simplify_label(label: str) -> str:
-    """A label without its extension or its inversion.
-
-    ``Fmaj7`` is ``F``, ``Am7`` is ``Am``, ``Gsus4`` is ``G``, ``C/E`` is ``C``, and ``N`` is
-    left alone - it is not a chord with an extension, it is the absence of one. Anything
-    unreadable is returned as it came: a label this function does not understand is a label it
-    has no business rewriting.
-    """
-    if label == NO_CHORD:
-        return label
-
-    root, _, bass = label.partition("/")
-    # Longest suffix first, so `m7b5` is tried before `m7` before `m`.
-    for quality in sorted(QUALITIES, key=lambda item: -len(item.suffix)):
-        if quality.suffix and root.endswith(quality.suffix):
-            return f"{root[: -len(quality.suffix)]}{quality.parent}"
-
-    return root if bass else label

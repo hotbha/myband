@@ -260,16 +260,18 @@ only thing that creates an object:
 ```sql
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('myband-audio', 'myband-audio', false, 209715200,
-        array['audio/mpeg', 'audio/wav', 'audio/midi'])
+        array['audio/mpeg', 'audio/wav', 'audio/midi', 'application/json'])
 on conflict (id) do update
     set allowed_mime_types = excluded.allowed_mime_types,
         file_size_limit = excluded.file_size_limit;
 ```
 
-`audio/midi` is there for the analysis worker, not for the browser: its MIDI artifact is
-written into the same bucket, and a storage policy is enforced on every PUT - including
-the ones the API never sees. Leaving it out produces a 415 on the worker's write, which
-surfaces as `storage_rejected` on the job (see docs/analysis-worker.md).
+The last two are there for the analysis worker, not for the browser: both of its artifacts are
+written into the same bucket, and a storage policy is enforced on every PUT - including the ones
+the API never sees. `audio/midi` is the MIDI file and `application/json` the chord timeline.
+Leaving either out produces a 415 on the worker's write, which surfaces as `storage_rejected` on
+the job at whichever `store_*` stage writes it (see docs/analysis-worker.md). A new artifact kind
+means a new content type in this list, and nothing on the API side can tell you it is missing.
 
 With a real Cloudflare R2 bucket, the same code runs unchanged: drop `R2_ENDPOINT_URL`
 and `R2_REGION` and set `R2_ACCOUNT_ID` to the account id. What the bucket itself has to
@@ -283,7 +285,7 @@ but the write is the bucket's to allow or refuse.
 
 | Setting | Value | Why |
 | --- | --- | --- |
-| Allowed content types | `audio/mpeg`, `audio/wav`, **`audio/midi`** | the browser uploads the first two, the analysis worker writes the third |
+| Allowed content types | `audio/mpeg`, `audio/wav`, **`audio/midi`**, **`application/json`** | the browser uploads the first two, the analysis worker writes the last two |
 | Object size limit | at least the 200 MiB cap (`209715200`) | the cap is the API's rule; a stricter bucket limit refuses a legal upload with a 403 the user can do nothing about |
 | CORS | `PUT` from the web origin, `Content-Type` allowed | the upload goes from the browser straight to the bucket, with no API in the path |
 
@@ -295,8 +297,9 @@ Worth knowing before a deploy, because only one of them can refuse a write:
   upload, and compares `allowed_mime_types` against the `Content-Type` of the PUT - which
   is the type the API signed. That is what `upload_rules.resolve_content_type` is for:
   a WAV declared as `audio/x-wav` or `audio/wave` is signed as `audio/wav`, so the bucket
-  never sees an alias it does not have in its list. The list above still has to contain
-  the canonical types, and `audio/midi` still has to be in it for the worker.
+  never sees an alias it does not have in its list. The list above still has to contain the
+  canonical types, and both worker types still have to be in it - `audio/midi` for the MIDI,
+  `application/json` for the chord timeline.
 - **Cloudflare R2 has no equivalent.** There is no `allowed_mime_types` and no per-bucket
   size limit to set: the only gates are the presigned URL's own scope and the API's checks
   (`check_object`, `resolve_content_type`), so the code is the single source of truth for

@@ -176,14 +176,20 @@ for this project's Python 3.12 - verified rather than assumed:
 Neither is a missing capability so much as a missing dependency, and both are one function away
 from being replaced.
 
-## The bucket has to allow `audio/midi`
+## The bucket has to allow both artifacts' content types
 
 A storage policy is enforced on every PUT, including the ones the API never performs. The
-worker writes its MIDI artifact into the same bucket the browser uploads to, so a bucket
-created with `allowed_mime_types = {audio/mpeg, audio/wav}` answers **415** on the worker's
-write. The end-to-end test found this the hard way; the fix is in
-[upload-flow.md](upload-flow.md) (add `audio/midi`), and the failure now surfaces as
-`storage_rejected` on the job instead of as three rounds of `storage_unavailable`.
+worker writes its artifacts into the same bucket the browser uploads to, so a bucket created
+with `allowed_mime_types = {audio/mpeg, audio/wav}` answers **415** on the worker's write. The
+end-to-end test found this the hard way with the MIDI; the fix is in
+[upload-flow.md](upload-flow.md), and the failure now surfaces as `storage_rejected` on the job
+instead of as three rounds of `storage_unavailable`.
+
+There are two artifact types per job, so the bucket needs two entries beyond the browser's:
+`audio/midi` (the transcription, written by `store_midi`) and `application/json` (the chord
+timeline, written by `store_chords`). The refusal names neither: it arrives as a
+`storage_rejected` on whichever `store_*` stage the policy does not allow, so a new artifact
+kind is a bucket change as well as a code change.
 
 ## Known limitations
 

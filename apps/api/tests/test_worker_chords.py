@@ -154,28 +154,14 @@ def test_silence_is_no_chord_rather_than_a_guess(tmp_path: Path) -> None:
     assert chord_summary.confidence(timeline.segments) == 0.0
 
 
-def test_an_unsure_extension_is_reported_as_its_triad() -> None:
-    """The rule the vocabulary is built around: a speculative seventh loses to a certain triad.
-
-    Fmaj7 is F, Am7 is Am, Gsus4 is G, Bm7b5 is Bdim - and a slash bass goes with the extension,
-    because a segment that is not sure of its seventh is not sure of its inversion either.
-    """
-    assert chord_templates.simplify_label("Fmaj7") == "F"
-    assert chord_templates.simplify_label("Am7") == "Am"
-    assert chord_templates.simplify_label("Gsus4") == "G"
-    assert chord_templates.simplify_label("Dsus2") == "D"
-    assert chord_templates.simplify_label("Bm7b5") == "Bdim"
-    assert chord_templates.simplify_label("G7") == "G"
-    assert chord_templates.simplify_label("C/E") == "C"
-    # A triad is left exactly as it was, and so is a label this vocabulary does not know.
-    assert chord_templates.simplify_label("F#m") == "F#m"
-    assert chord_templates.simplify_label("C") == "C"
-    assert chord_templates.simplify_label("Hmaj9") == "Hmaj9"
-    assert chord_templates.simplify_label(NO_CHORD) == NO_CHORD
-
-
 def test_no_segment_claims_an_extension_it_is_not_sure_of(timeline: ChordTimeline) -> None:
-    """The same rule, as an invariant over real detections rather than as a table of examples."""
+    """The rule the vocabulary is built around, as an invariant over real detections.
+
+    A speculative seventh loses to a certain triad: a segment that stored an extension, an inversion
+    or a slash bass was sure enough of it to say so, which is the same rule
+    ``chord_summary.simplify_label`` applies, and it is checked here against a recording rather than
+    against a table of examples.
+    """
     for segment in timeline.segments:
         if segment.chord == NO_CHORD:
             continue
@@ -183,11 +169,31 @@ def test_no_segment_claims_an_extension_it_is_not_sure_of(timeline: ChordTimelin
         root, _, bass = segment.chord.partition("/")
         if bass:
             assert segment.confidence >= chords.SLASH_CONFIDENCE
-        if chord_templates.simplify_label(root) != root:
+        if chord_summary.simplify_label(root) != root:
             assert segment.confidence >= chords.EXTENSION_CONFIDENCE
 
 
 # --- The vocabulary -----------------------------------------------------------
+
+
+def test_the_grammar_simplifies_every_extension_to_its_triad() -> None:
+    """The rule the vocabulary is built around, as a table: a speculative seventh loses to a triad.
+
+    Fmaj7 is F, Am7 is Am, Gsus4 is G, Bm7b5 is Bdim - and a slash bass goes with the extension,
+    because a segment that is not sure of its seventh is not sure of its inversion either.
+    """
+    assert chord_summary.simplify_label("Fmaj7") == "F"
+    assert chord_summary.simplify_label("Am7") == "Am"
+    assert chord_summary.simplify_label("Gsus4") == "G"
+    assert chord_summary.simplify_label("Dsus2") == "D"
+    assert chord_summary.simplify_label("Bm7b5") == "Bdim"
+    assert chord_summary.simplify_label("G7") == "G"
+    assert chord_summary.simplify_label("C/E") == "C"
+    # A triad is left exactly as it was, and so is a label this vocabulary does not know.
+    assert chord_summary.simplify_label("F#m") == "F#m"
+    assert chord_summary.simplify_label("C") == "C"
+    assert chord_summary.simplify_label("Hmaj9") == "Hmaj9"
+    assert chord_summary.simplify_label(NO_CHORD) == NO_CHORD
 
 
 def test_the_grammar_is_the_ten_qualities_over_the_twelve_roots() -> None:
@@ -252,6 +258,28 @@ def test_an_empty_timeline_digests_to_nothing_rather_than_to_zero() -> None:
     assert chord_summary.progression(()) == ()
     assert chord_summary.confidence(()) == 0.0
     assert chord_summary.silence_ratio(()) == 0.0
+
+
+def test_coverage_measures_a_card_against_the_recording_it_describes() -> None:
+    """How much of the song the chords on a card account for, silence included in the denominator.
+
+    The number a chord screen puts beside "these are the chords this song is made of": four fifths
+    of this recording is the two chords, and the fifth that is silence is not something a card can
+    claim. A chord left off the card is held time too, and is simply not counted towards it.
+    """
+    segments = (
+        ChordSegment(start_ms=0, end_ms=2000, chord="Am", confidence=0.9),
+        ChordSegment(start_ms=2000, end_ms=3000, chord="G", confidence=0.8),
+        ChordSegment(start_ms=3000, end_ms=5000, chord=NO_CHORD, confidence=0.2),
+    )
+
+    assert chord_summary.coverage(segments, ("Am", "G")) == 0.6
+    # A shorter ranking than the card's own claims less, rather than ceasing to be measurable.
+    assert chord_summary.coverage(segments, ("Am",)) == 0.4
+    # A rest is not a chord however a ranking spells it, and an empty one claims nothing at all.
+    assert chord_summary.coverage(segments, (NO_CHORD,)) == 0.0
+    assert chord_summary.coverage(segments, ()) == 0.0
+    assert chord_summary.coverage((), ("Am",)) == 0.0
 
 
 def test_the_pipeline_tests_use_the_same_shapes_as_these_dataclasses() -> None:

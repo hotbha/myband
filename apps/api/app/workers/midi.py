@@ -90,6 +90,16 @@ def transcribe_with_pyin(path: Path, *, bpm: float, window_seconds: int) -> Tran
         sr=sample_rate,
         frame_length=FRAME_LENGTH,
         hop_length=HOP_LENGTH,
+        # librosa's default here is `transition_min_prob=1e-4`, and its own docstring
+        # describes that as an approximation *for speed*: the Viterbi decode follows
+        # only transitions of probability 1e-4 or better. In real, mixed audio the
+        # unvoiced-to-voiced transition scores below that, so the decoder never leaves
+        # the unvoiced state and the entire window comes back as unbroken NaN. That is
+        # what made a real recording yield "notes": 0 and a 66-byte tempo map while the
+        # synthetic self-test still passed - a pure tone is the easy case. `None` asks
+        # for exact inference, so every predecessor state is considered and the tracker
+        # follows the audio instead of the prior.
+        transition_min_prob=None,
     )
     times = librosa.times_like(pitch_track, sr=sample_rate, hop_length=HOP_LENGTH)
     notes = _notes_from_pitch_track(times, pitch_track)

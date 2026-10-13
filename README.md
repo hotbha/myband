@@ -8,9 +8,9 @@ The workspace, toolchain and environment strategy are in place, authentication
 level security and the analysis queue seam - is versioned as Supabase migrations, and
 the browser-to-R2 upload lifecycle queues an analysis job. A standalone worker drains
 that queue: it fetches the recording, measures duration, BPM and key, transcribes a
-MIDI sketch and writes the result back against the song. Chords and song sections are
-the next analysis stages. What has to be true before a public beta, and what is
-knowingly missing, is in `PRODUCTION_READINESS.md`.
+MIDI sketch and writes the result back against the song. The library and the song page
+show all of it. Song sections are the next analysis stage; what has to be true before a
+public beta, and what is knowingly missing, is in `PRODUCTION_READINESS.md`.
 
 ## Stack
 
@@ -311,14 +311,15 @@ Rules that are not negotiable:
 
 ## Not implemented yet
 
-Chords and song sections. The worker measures duration, BPM and key and writes a MIDI
-sketch, and the library shows all of it, but chords and sections have no stage and no
-screen yet. Nothing runs the worker for you either: it is a process (`pnpm worker:api`),
-and the RunPod dispatcher that would scale it is not wired into the queue. Also missing:
-the sweeper for abandoned uploads, the drainer for `storage_gc_queue`, a cancel path, a
-retry for a song that has already failed, and any quota on what an account may upload.
-AI video generation, AI musicians and training pipelines are out of scope for this
-repository.
+Song sections. The worker measures duration, BPM and key, reads a chord timeline from
+the audio and writes a MIDI sketch, and the library and the song page show all of it -
+but sections have no stage and no screen yet. Nothing runs the worker for you either: it
+is a process (`pnpm worker:api`), and the RunPod dispatcher that would scale it is not
+wired into the queue, which is also why production asks for no RunPod credentials
+(`apps/api/app/core/config.py`). Also missing: the sweeper for abandoned uploads, the
+drainer for `storage_gc_queue`, a cancel path, a retry for a song that has already
+failed, and any quota on what an account may upload. AI video generation, AI musicians
+and training pipelines are out of scope for this repository.
 
 Each of those is a numbered risk in `PRODUCTION_READINESS.md`, with what stands in for it
 today and what has to be true before the beta.

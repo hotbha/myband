@@ -9,3 +9,7 @@ pnpm-lock.yaml
 apps/api/.venv/
 apps/api/uv.lock
 __pycache__/
+
+# Untracked spike scratch (spike/) - hundreds of MB of experiments that are not
+# part of the product and are never formatted. Also in .gitignore.
+spike/

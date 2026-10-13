@@ -41,7 +41,7 @@ above leaves open.
 - [ ] `MYBAND_ENV=production` (this is what switches the interactive docs off), `MYBAND_LOG_LEVEL=info`
 - [ ] `MYBAND_CORS_ORIGINS` names the deployed web origin and nothing else - not a wildcard
 - [ ] `MYBAND_METRICS_TOKEN` is set, and `/admin/metrics` answers counts with it and `401` without
-- [ ] `MYBAND_PIPELINE_VERSION` matches what the deployed worker writes (bump it when the worker's output shape changes)
+- [ ] `MYBAND_PIPELINE_VERSION` matches what the deployed worker writes - `0.2.0` since the chord timeline (bump it when the worker's output shape changes)
 - [ ] `apps/web`: `NEXT_PUBLIC_API_BASE_URL` and `API_BASE_URL` both point at the API; the Supabase URL and publishable key are the project's
 
 **Storage**
@@ -121,9 +121,13 @@ Known, decided, and not being fixed in this sprint:
   ([queue-state-machine.md](docs/queue-state-machine.md), "Deliberately absent").
 - **No retry route.** A song that failed can only be re-uploaded, which creates a new song;
   nothing re-enqueues an existing one (R3).
-- **Chords and song sections.** The next two analysis stages, and the milestone before beta.
+- **Song sections.** The next analysis stage, and the milestone before beta. Chords left this
+  list with the chords release: the stage, the `chords` artifact and the song page's timeline.
 - **No GPU dispatcher.** A worker is a process someone runs; the RunPod path is not wired into
-  the queue ([upload-flow.md](docs/upload-flow.md), "Deliberately not here yet").
+  the queue ([upload-flow.md](docs/upload-flow.md), "Deliberately not here yet"), and production
+  therefore requires no RunPod credentials: `Settings._require_production_secrets` demands only
+  what running code reads. The commit that lands the dispatcher puts them back in that map, and
+  `apps/api/tests/test_config.py` pins both halves of the decision.
 - **No quotas, plans or billing** (R5).
 - **No frontend test framework** (R7), and **no OpenAPI codegen** (R6).
 - **Whole-object reads.** A download link fetches the entire artifact; there is no ranged read
@@ -151,5 +155,5 @@ $env:MYBAND_TEST_DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:54322/
   stands in for the fix in the meantime, and where.
 - **Point at code, not at intent.** Every mitigation above names a module, a route, a test or a
   setting that exists today.
-- **Re-read it at each milestone** - before chords, before song sections, before the beta - and
+- **Re-read it at each milestone** - before song sections, before the beta - and
   at each deploy that changes one of the gates.

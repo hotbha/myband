@@ -336,12 +336,14 @@ created without `audio/midi`: it is the one upload failure only the bucket can p
   lifecycle rule is the backstop.
 - **The dispatcher.** Jobs stay `queued` until the RunPod worker loop lands; the
   queue service it will call is already written and tested
-  (`app/services/queue.py`).
+  (`app/services/queue.py`). Nothing reads RunPod today, so production is not asked
+  for its credentials (`app/core/config.py`, `_require_production_secrets`); the
+  commit that adds the dispatcher should put them back in that map.
 - **A download for anything but the MIDI.** `analysis_results` holds `bpm`, `key`
-  and `chords` rows as well, and none of them has a route: tempo and key are read
-  from the `songs` row's headline columns, and chords have no screen yet. The
-  signing is now general - `presign_get` takes any key - so each is a route and a
-  schema away rather than a piece of machinery.
+  and `chords` rows, and only `chords` has a route of its own
+  (`GET /songs/{id}/chords`, read by the song page); tempo and key are read from
+  the `songs` row's headline columns. The signing is general - `presign_get` takes
+  any key - so each is a route and a schema away rather than a piece of machinery.
 - **Ranged or streamed reads.** A link fetches the whole object. Playing the
   recording in a `<audio>` element from the bucket would want a range-capable URL and
   an expiry sized for a listening session, not for the click that follows a response.

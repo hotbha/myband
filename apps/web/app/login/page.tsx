@@ -19,6 +19,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const params = await searchParams;
   const next = safeRedirectPath(params.next);
   const error = readTextParam(params.error);
+  // The landing page's beta form hands the address over in the query string, so somebody who
+  // typed it there does not have to type it again here.
+  const email = readTextParam(params.email);
 
   // Signed in already? Skip the form. Middleware does this as well; repeating it
   // here keeps the page correct on its own if the matcher is ever narrowed.
@@ -33,7 +36,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
       <div className="space-y-1.5">
         <h1 className="text-2xl font-semibold tracking-tight">Sign in to MyBand.video</h1>
         <p className="text-sm text-muted-foreground">
-          Upload a track and get BPM, key, chords, MIDI and song sections back.
+          Upload a track and get its tempo, key, chords and a MIDI sketch back.
         </p>
       </div>
 
@@ -47,7 +50,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         <span className="h-px flex-1 bg-border" />
       </div>
 
-      <EmailAuthForm next={next} />
+      <EmailAuthForm next={next} defaultEmail={email} />
     </main>
   );
 }

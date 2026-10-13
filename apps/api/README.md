@@ -23,7 +23,7 @@ Environment variables live in `.env` (see `.env.example`). Layout:
 | `app/models`     | One module per table: row dataclass + its statements    |
 | `app/schemas`    | Pydantic request/response contracts                     |
 | `app/services`   | Business logic (`queue.py`: the analysis state machine) |
-| `app/workers`    | RunPod GPU worker integration for audio analysis        |
+| `app/workers`    | The standalone analysis worker (stages, runner)         |
 | `tests`          | Pytest suite (`pythonpath = ["."]`, imports `app.*`)    |
 
 The tests split in two: unit tests that need nothing, and database tests

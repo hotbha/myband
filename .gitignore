@@ -38,3 +38,7 @@ Thumbs.db
 *.log
 npm-debug.log*
 pnpm-debug.log*
+
+# Local spike scratch (spike/) - hundreds of MB of experiments that are not part of
+# the product. Never staged: a release commit must not be able to swallow it.
+spike/

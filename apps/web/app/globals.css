@@ -43,6 +43,29 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Typography. Three families, each with one job: a display face for headlines, a
+     neutral face for reading, and a monospace for anything the analyser measured.
+     Mapped through `@theme inline` because the values reference the CSS variables
+     `next/font` defines. */
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-bricolage), var(--font-jakarta), ui-sans-serif, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "SFMono-Regular", monospace;
+
+  /* The marketing palette. `--color-signal` is the one accent: it is spent on the
+     call to action, the waveform and the metering, and nowhere else. The values
+     themselves are scoped to `.marketing` so the token names resolve only inside a
+     marketing surface rather than leaking into the app shell. */
+  --color-canvas: var(--canvas);
+  --color-signal: var(--signal);
+  --color-signal-soft: var(--signal-soft);
+  --color-signal-strong: var(--signal-strong);
+  --color-pulse: var(--pulse);
+
+  --animate-drift: drift 24s ease-in-out infinite alternate;
+  --animate-drift-reverse: drift-reverse 32s ease-in-out infinite alternate;
+  --animate-live-dot: live-dot 2.6s ease-in-out infinite;
+  --animate-rise: rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 :root {
@@ -114,11 +137,145 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/**
+ * The marketing surface.
+ *
+ * It re-points the same token names the rest of the app already uses, which is what
+ * lets every shadcn/ui component inside it - Card, Badge, Tabs, Accordion, Button -
+ * come out on-palette without a single variant being forked. Scoped rather than put
+ * on `:root` or `.dark` so the dashboard, the song page and the login form keep the
+ * neutral theme they were reviewed with.
+ *
+ * Declared after `.dark` on purpose: both blocks are one class deep, so order is what
+ * decides, and the marketing surface should win wherever the two overlap.
+ */
+.marketing {
+  --canvas: oklch(0.145 0.018 285);
+  --signal: oklch(0.66 0.19 287);
+  --signal-soft: oklch(0.79 0.11 288);
+  --signal-strong: oklch(0.55 0.22 287);
+  --pulse: oklch(0.84 0.13 195);
+
+  --background: oklch(0.145 0.018 285);
+  --foreground: oklch(0.975 0.004 285);
+  --card: oklch(0.195 0.02 285);
+  --card-foreground: oklch(0.975 0.004 285);
+  --popover: oklch(0.185 0.02 285);
+  --popover-foreground: oklch(0.975 0.004 285);
+  --primary: oklch(0.66 0.19 287);
+  --primary-foreground: oklch(0.99 0.005 285);
+  --secondary: oklch(0.26 0.02 285);
+  --secondary-foreground: oklch(0.975 0.004 285);
+  --muted: oklch(0.24 0.02 285);
+  --muted-foreground: oklch(0.75 0.02 285);
+  --accent: oklch(0.28 0.035 287);
+  --accent-foreground: oklch(0.975 0.004 285);
+  --destructive: oklch(0.68 0.19 25);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.62 0.19 287);
+
+  color-scheme: dark;
+}
+
+/**
+ * The page behind the marketing surface has to agree with it.
+ *
+ * The landing page paints its own dark canvas, but the document body is still the
+ * app shell's light background - and on iOS a rubber-band scroll at the top or
+ * bottom reveals it as a white flash. `:has()` is what keeps this honest: the rule
+ * only applies while a marketing surface is actually on the page.
+ */
+body:has([data-surface="marketing"]) {
+  background-color: oklch(0.145 0.018 285);
+}
+
+@keyframes drift {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.75;
+  }
+  to {
+    transform: translate3d(4%, -3%, 0) scale(1.12);
+    opacity: 1;
+  }
+}
+
+@keyframes drift-reverse {
+  from {
+    transform: translate3d(0, 0, 0) scale(1.05);
+    opacity: 0.6;
+  }
+  to {
+    transform: translate3d(-5%, 4%, 0) scale(1);
+    opacity: 0.9;
+  }
+}
+
+@keyframes live-dot {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--pulse) 55%, transparent);
+  }
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 6px color-mix(in oklab, var(--pulse) 0%, transparent);
+  }
+}
+
+@keyframes rise {
+  from {
+    transform: scaleY(0.08);
+    opacity: 0.2;
+  }
+  to {
+    transform: scaleY(var(--bar-scale, 1));
+    opacity: 1;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+
+  /* Anchor navigation on the landing page is in-page (features, FAQ, beta) and lands
+     under a sticky header, so the scroll offset is a base-level concern rather than
+     something each section has to remember. */
+  html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 5.5rem;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+}
+
+/**
+ * Motion, as the reader asked for it.
+ *
+ * `[data-reveal]` is the hook the marketing surfaces put on anything that arrives with
+ * an animation - scroll reveals, the hero's entrance, the analyser's bars. Motion writes
+ * those as inline styles, so an `!important` rule at the stylesheet level is the only
+ * thing that can override them, and it has to be here rather than in JavaScript:
+ * `prefers-reduced-motion` cannot be read while the server renders, so a JS branch would
+ * mean the server and the client disagree about the first paint.
+ *
+ * The same hook serves `<noscript>` on the landing page, where an unanimated page beats
+ * a page whose sections are stuck at `opacity: 0`.
+ */
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal] {
+    opacity: 1 !important;
+    transform: none !important;
+    animation: none !important;
   }
 }

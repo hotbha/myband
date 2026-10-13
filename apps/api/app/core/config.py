@@ -47,7 +47,10 @@ class Settings(BaseSettings):
     # after the pipeline changes (docs/schema.md). Bump it whenever the worker's
     # output shape or algorithms change - a job is billed and read back against
     # the version recorded here.
-    pipeline_version: str = Field(default="0.1.0", validation_alias="MYBAND_PIPELINE_VERSION")
+    #
+    # 0.1.0 -> 0.2.0 for the chord timeline: the worker now writes a `chords`
+    # artifact, so a 0.1.0 row is one produced without chords.
+    pipeline_version: str = Field(default="0.2.0", validation_alias="MYBAND_PIPELINE_VERSION")
 
     # --- Database (Supabase PostgreSQL) ---
     # The API connects with the project's `postgres` role, which bypasses row
@@ -105,6 +108,10 @@ class Settings(BaseSettings):
     )
 
     # --- GPU workers (RunPod) ---
+    # Carried for the dispatcher, read by nothing yet: that is why they are not in
+    # `_require_production_secrets` below, and why a production boot does not ask
+    # for them (docs/upload-flow.md, "Deliberately not here yet"). The commit that
+    # adds the dispatcher adds them back to that map.
     runpod_api_key: SecretStr = Field(default=SecretStr(""), validation_alias="RUNPOD_API_KEY")
     runpod_endpoint_id: str = Field(default="", validation_alias="RUNPOD_ENDPOINT_ID")
 
@@ -173,7 +180,11 @@ class Settings(BaseSettings):
         """Fail closed in production, stay convenient in development.
 
         A deployment that is missing its R2 keys should not boot and then fail one
-        upload at a time.
+        upload at a time, so this demands everything the running code reads.
+        RunPod's credentials are deliberately absent: nothing calls RunPod yet, and
+        asking for them would mean either a placeholder secret or a deploy blocked
+        for no functional gain. The dispatcher's commit adds them back here, and
+        ``tests/test_config.py`` pins both halves of that.
         """
         if not self.is_production:
             return self
@@ -183,8 +194,6 @@ class Settings(BaseSettings):
             "R2_ACCOUNT_ID": self.r2_account_id,
             "R2_ACCESS_KEY_ID": self.r2_access_key_id.get_secret_value(),
             "R2_SECRET_ACCESS_KEY": self.r2_secret_access_key.get_secret_value(),
-            "RUNPOD_API_KEY": self.runpod_api_key.get_secret_value(),
-            "RUNPOD_ENDPOINT_ID": self.runpod_endpoint_id,
         }
         missing = sorted(name for name, value in required.items() if not value)
         if missing:

@@ -19,7 +19,14 @@ import { FormMessage } from "./form-message";
  * the form still knows what to do before hydration and the fields are never
  * cleared by a re-render.
  */
-export function EmailAuthForm({ next }: { readonly next: string }) {
+export function EmailAuthForm({
+  next,
+  defaultEmail,
+}: {
+  readonly next: string;
+  /** Prefilled when the visitor arrived from the landing page's beta form. */
+  readonly defaultEmail?: string | null;
+}) {
   const [state, formAction, isPending] = useActionState(emailAuth, initialAuthActionState);
 
   return (
@@ -33,6 +40,7 @@ export function EmailAuthForm({ next }: { readonly next: string }) {
           name="email"
           type="email"
           autoComplete="email"
+          defaultValue={defaultEmail ?? ""}
           placeholder="you@example.com"
           required
           aria-invalid={Boolean(state.fieldErrors.email)}

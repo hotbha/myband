@@ -12,7 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # apps/api/.env, resolved from this file rather than the working directory: the
@@ -50,7 +50,11 @@ class Settings(BaseSettings):
     #
     # 0.1.0 -> 0.2.0 for the chord timeline: the worker now writes a `chords`
     # artifact, so a 0.1.0 row is one produced without chords.
-    pipeline_version: str = Field(default="0.2.0", validation_alias="MYBAND_PIPELINE_VERSION")
+    # 0.2.0 -> 0.3.0 for the MIDI window: a 0.2.0 row's MIDI describes the first
+    # 30 seconds of its recording at most, and a 0.3.0 row's up to 120 - so
+    # `summary.window_seconds` is one number with two different meanings, and a
+    # note count is only comparable to another of its own version.
+    pipeline_version: str = Field(default="0.3.0", validation_alias="MYBAND_PIPELINE_VERSION")
 
     # --- Database (Supabase PostgreSQL) ---
     # The API connects with the project's `postgres` role, which bypasses row
@@ -151,11 +155,30 @@ class Settings(BaseSettings):
     worker_reap_seconds: float = Field(
         default=60.0, ge=5, le=3600, validation_alias="MYBAND_WORKER_REAP_SECONDS"
     )
-    # How much of the recording the MIDI sketch is built from. The pitch tracker
-    # costs about one second per second of audio, so this is what keeps a long
-    # song's job bounded (docs/analysis-worker.md).
-    worker_midi_window_seconds: int = Field(
-        default=30, ge=5, le=600, validation_alias="MYBAND_WORKER_MIDI_WINDOW_SECONDS"
+    # The most of a recording the MIDI sketch is built from - a ceiling, not a
+    # slice: a song shorter than this is transcribed whole (whose window it
+    # really got is decided per job by `WorkerTuning.midi_window_for`). The pitch
+    # tracker costs about a tenth of a second per second of audio, so this is
+    # what keeps a long song's job bounded (docs/analysis-worker.md).
+    #
+    # 30 seconds until this release, 120 here. A window sweep on the three beta
+    # recordings (30 s / 60 s / 120 s / whole song, `MIDI_WINDOW_REPORT.md`)
+    # measured 2x-4.5x the notes for 3-9 extra seconds of CPU and under 90 MiB,
+    # and still two pages of score.
+    #
+    # Both names read this. `MYBAND_WORKER_MIDI_WINDOW_SECONDS` is the setting's
+    # name before it was a cap, and it keeps working because a deployment that
+    # sets it is asking for a smaller window, not a different one - silently
+    # ignoring it would hand that deployment 120 s after it asked for 30. The
+    # legacy name can go once nothing sets it.
+    worker_midi_max_window_seconds: int = Field(
+        default=120,
+        ge=5,
+        le=600,
+        validation_alias=AliasChoices(
+            "MYBAND_WORKER_MIDI_MAX_WINDOW_SECONDS",
+            "MYBAND_WORKER_MIDI_WINDOW_SECONDS",
+        ),
     )
 
     # --- Operations ---

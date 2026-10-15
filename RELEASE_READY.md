@@ -13,15 +13,15 @@ Feature development stops here: no new capability is added on this branch after 
 
 ## What is being released
 
-|                  |                                                                                                                                                                                                                                                    |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Branch           | `feat/music-analysis-v2`, three commits over `main` (`4428e2d`)                                                                                                                                                                                    |
-| Head             | `8bf2d88` - chord UX over `1e32e71` (the pYIN fix) over `d8c51bf` (chords)                                                                                                                                                                         |
-| Diff             | 32 files, +3012 / -156; **no migration**, so no schema change and no database rollback. The uncommitted release-prep change on top of it stages 12 paths - see [BETA_READY.md](BETA_READY.md)                                                      |
-| Pipeline version | `MYBAND_PIPELINE_VERSION=0.2.0` - B5 is closed; see [BETA_READY.md](BETA_READY.md)                                                                                                                                                                 |
-| Verified green   | `pnpm test:api` **248 passed / 0 skipped / 0 failed in 15.79 s** against a migrated database - B1; `ruff check` clean, `pnpm lint`, `pnpm typecheck` and `pnpm build` exit 0 as recorded in [BETA_READY.md](BETA_READY.md)                         |
-| Verified on      | Windows development box, `MYBAND_ENV=development`, real recordings - through the browser for B2: sign-up, sign-in, three uploads, the worker, the chord UI and three MIDI downloads, all in [BETA_SIGNOFF.md](BETA_SIGNOFF.md) - not on the RunPod |
-| Not verified     | Cloudflare R2, a deployed Supabase, the RunPod path, Google sign-in, a human ear on the chords and the notes, and any failure path induced through the browser - the list is [BETA_SIGNOFF.md](BETA_SIGNOFF.md), section 9                         |
+|                  |                                                                                                                                                                                                                                                                                                                     |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Branch           | `feat/music-analysis-v2`, three commits over `main` (`4428e2d`)                                                                                                                                                                                                                                                     |
+| Head             | `8bf2d88` - chord UX over `1e32e71` (the pYIN fix) over `d8c51bf` (chords)                                                                                                                                                                                                                                          |
+| Diff             | 32 files, +3012 / -156; **no migration**, so no schema change and no database rollback. The uncommitted release-prep change on top of it stages 12 paths - see [BETA_READY.md](BETA_READY.md)                                                                                                                       |
+| Pipeline version | `MYBAND_PIPELINE_VERSION=0.3.0` - the MIDI window is a cap now (120 s, clamped to the recording) rather than a fixed 30 s slice, so a 0.2.0 row's `summary.window_seconds` and note count mean something else. Measurements and the sweep behind the number: [MIDI_WINDOW_REPORT.md](MIDI_WINDOW_REPORT.md)         |
+| Verified green   | `pnpm test:api` **263 tests: 262 passed / 1 skipped / 0 failed in 18.29 s** against a migrated database - the skip is the `MYBAND_E2E` end-to-end gate, which no plain suite run exercises; `ruff check` clean, `pnpm lint`, `pnpm typecheck` and `pnpm build` exit 0 as recorded in [BETA_READY.md](BETA_READY.md) |
+| Verified on      | Windows development box, `MYBAND_ENV=development`, real recordings - through the browser for B2: sign-up, sign-in, three uploads, the worker, the chord UI and three MIDI downloads, all in [BETA_SIGNOFF.md](BETA_SIGNOFF.md) - not on the RunPod                                                                  |
+| Not verified     | Cloudflare R2, a deployed Supabase, the RunPod path, Google sign-in, a human ear on the chords and the notes, and any failure path induced through the browser - the list is [BETA_SIGNOFF.md](BETA_SIGNOFF.md), section 9                                                                                          |
 
 The verification commands, and the note that the database cases skip themselves, are in
 [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md#commands-this-rests-on).
@@ -52,17 +52,22 @@ Nothing above claims song sections. They are the next analysis stage and are not
 
 Accepted, measured, and written down rather than discovered by a beta user.
 
-**The MIDI covers only the first 30 seconds of a recording.** `MYBAND_WORKER_MIDI_WINDOW_SECONDS`
-defaults to 30 (`ge=5, le=600`), because the pitch tracker costs roughly a second per second of
-audio and the window is what keeps a long song's job bounded. A window sweep on the three
-recordings (30 s / 60 s / 120 s / whole song) measured what the cap costs: a whole-song
-transcription is **2x to ~11x** more MuseScore-visible notes than the first 30 seconds, at a peak of
-232 MiB on a 345 s song - against `analyze` peaking at 642 MiB on the same song, so MIDI is not the
-memory outlier - and 11-19x realtime, at most 31 s for a 5:45 song inside a 900 s budget. The
-recommendation is a bounded whole-song transcription (or a 120 s elbow); **it is not implemented
-here**, and a whole song longer than ten minutes is not expressible at all without raising the
-field's `le=600`. Whoever implements it should re-measure on the RunPod CPU profile, since these
-numbers come from a Windows box.
+**The MIDI covers the first two minutes, not the whole song.** The window is a cap now rather than
+a fixed slice: `MYBAND_WORKER_MIDI_WINDOW_SECONDS` defaults to 120 (`ge=5, le=600`) and is clamped
+to the recording's own duration, so a song under two minutes is transcribed whole and a longer one
+stops at 2:00. That replaces the 30-second slice this release was carrying, which is why the
+pipeline version moves to `0.3.0`: rows written before the change still say
+`window_seconds: 30`, so a database holds two generations and the summary field is what separates
+them. Measured on the three recordings, the wider window is **2.0x, 3.6x and 4.5x** the notes the
+30 s slice produced (19 -> 38, 35 -> 126, 29 -> 130) for +2.8 s to +9.1 s of pitch tracking and at
+most 88 MiB traced - against `analyze` peaking at 642 MiB on the same 345 s song, so MIDI is still
+not the memory outlier. **What remains out of reach is the tail:** a song longer than two minutes
+still gets its opening only, and a whole-song transcription carries 6.6x and 12.7x the notes of the
+30 s slice on the two longer songs, at up to 232 MiB traced and 31 s of pitch tracking on the 5:45
+one. That is not implemented here, and a whole song longer than ten minutes is not expressible at
+all without raising the field's `le=600`. Numbers, method and caveats:
+[MIDI_WINDOW_REPORT.md](MIDI_WINDOW_REPORT.md); whoever raises the cap further should re-measure on
+the RunPod CPU profile, since these numbers come from a Windows box.
 
 **Deliberate algorithm choices.** Chords are read from the audio rather than from the MIDI (the
 sketch is monophonic, follows the bass, and cannot carry harmony); segments are frame-accurate with
@@ -115,7 +120,8 @@ database. **Close:** point `MYBAND_TEST_DATABASE_URL` at a migrated Postgres and
 (see the commands in the register).
 
 **Closed 2026-10-11.** Pointed at the local stack's migrated database, the suite reports **248 passed,
-0 skipped, 0 failed in 15.79 s** - and the 0 needs **two** variables, not one: `MYBAND_TEST_DATABASE_URL`
+0 skipped, 0 failed in 15.79 s** - 248 tests were in the suite then, 263 at this release, so a re-run
+today reads 262 passed and 1 skipped when `MYBAND_E2E` is unset - and the 0 needs **two** variables, not one: `MYBAND_TEST_DATABASE_URL`
 alone leaves exactly one skip, because `test_worker_e2e.py` gates itself on `MYBAND_E2E=1` as well.
 Everything the blocker listed ran against a real Postgres: the RLS and schema suites, the
 ownership-404 assertions, the queue state machine including the case that has to commit, and the
@@ -313,7 +319,7 @@ the detector's own numbers instead of an impression.
 **What we are trying to learn, per step.** Steps 1-3 measure whether the library-to-song navigation
 works at all; step 4 is the release's central design bet (is _simple_ the right default, or is hiding
 the detected label a mistake?); step 5 answers the one question only a user can - whether a
-30-second monophonic sketch is worth more than nothing, which is the whole argument for the window
+two-minute monophonic sketch is worth more than nothing, which is the whole argument for the window
 and the thing that decides the next piece of work; step 6 is what fills the next register entry.
 
 **Pass, and stop.** Pass: 8 of 10 upload unaided; 7 of 10 reach the song page unaided; median time

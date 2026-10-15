@@ -18,19 +18,46 @@ import os
 from collections.abc import Callable
 from dataclasses import replace
 from decimal import Decimal
+from pathlib import Path
 from uuid import UUID
 
 import psycopg
 import pytest
 from app.models import analysis_job, analysis_result, song
 from app.workers import artifacts
-from tests.fakes import FakeAnalysis, FakeChordTimeline, FakeObjectStore, FakeTranscription
+from tests.fakes import (
+    FakeAnalysis,
+    FakeChordTimeline,
+    FakeObjectStore,
+    FakeTranscription,
+    ScriptedStage,
+)
 from tests.worker_support import queued, worker
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("MYBAND_TEST_DATABASE_URL"),
     reason="set MYBAND_TEST_DATABASE_URL to test against a migrated database",
 )
+
+
+# --- A transcriber that reports what it was asked for ------------------------------
+
+
+class WindowRecorder:
+    """A transcriber that hands back a transcription and remembers the window it was given.
+
+    ``FakeTranscription`` is a fixed holder: it reports the window it was built with, 30,
+    whatever a job asks it for. The real ``transcribe_with_pyin`` echoes the window it was
+    handed, and *that* echo is what reaches ``analysis_results.summary`` - so a test about
+    the window has to watch the call rather than the value the fake happens to carry.
+    """
+
+    def __init__(self) -> None:
+        self.windows: list[int] = []
+
+    def __call__(self, path: Path, *, bpm: float, window_seconds: int) -> FakeTranscription:
+        self.windows.append(window_seconds)
+        return FakeTranscription(window_seconds=window_seconds)
 
 
 # --- The happy path -----------------------------------------------------------
@@ -106,8 +133,9 @@ def test_the_artifacts_describe_themselves(
     the database rather than against a copy of its regex.
     """
     job = queued(conn, store, user_id=user_id, song_id=song_id, make_object_key=make_object_key)
+    transcriber = WindowRecorder()
 
-    worker(conn, store).run_once()
+    worker(conn, store, transcribe=transcriber).run_once()
 
     rows = {row.kind: row for row in analysis_result.list_for_job(conn, job.id)}
     assert set(rows) == {"bpm", "key", "chords", "midi"}
@@ -139,8 +167,42 @@ def test_the_artifacts_describe_themselves(
     assert midi.object_key == artifacts.midi_object_key(user_id=user_id, job_id=job.id)
     assert midi.object_bytes == len(FakeTranscription().data)
     assert midi.object_content_type == "audio/midi"
-    assert midi.summary == {"notes": 3, "window_seconds": 30, "transcriber": "fake-transcriber"}
+    assert midi.summary == {"notes": 3, "window_seconds": 8, "transcriber": "fake-transcriber"}
     assert store.download(object_key=midi.object_key) == FakeTranscription().data
+
+    # The window in that summary is the one the transcriber was *asked* for: eight seconds,
+    # because the scripted analysis says the recording is 8 000 ms long. It is not the cap
+    # the job was allowed, which is what the field used to mean.
+    assert transcriber.windows == [8]
+
+
+def test_a_long_recording_is_transcribed_up_to_the_cap(
+    conn: psycopg.Connection,
+    store: FakeObjectStore,
+    user_id: UUID,
+    song_id: UUID,
+    make_object_key: Callable[..., str],
+    own_queue: None,
+) -> None:
+    """Ten minutes of audio is filled to the configured window, not to ten minutes.
+
+    The default tuning is what a worker boots with, so this is also the assertion that the
+    shipped cap reaches the tracker: 120 seconds, whatever the recording is.
+    """
+    job = queued(conn, store, user_id=user_id, song_id=song_id, make_object_key=make_object_key)
+    transcriber = WindowRecorder()
+
+    worker(
+        conn,
+        store,
+        analyze=ScriptedStage(FakeAnalysis(duration_ms=600_000)),
+        transcribe=transcriber,
+    ).run_once()
+
+    assert transcriber.windows == [120]
+
+    rows = {row.kind: row for row in analysis_result.list_for_job(conn, job.id)}
+    assert rows["midi"].summary["window_seconds"] == 120
 
 
 def test_the_worker_returns_none_when_the_queue_is_empty(

@@ -44,7 +44,7 @@ def tuning(**overrides: object) -> WorkerTuning:
         "backoff_seconds": 0.0,
         "timeout_seconds": 3600.0,
         "heartbeat_seconds": 0.05,
-        "midi_window_seconds": 30,
+        "midi_max_window_seconds": 120,
     }
     chosen.update(overrides)
     return WorkerTuning(**chosen)  # type: ignore[arg-type]

@@ -13,13 +13,19 @@ calling ``predict()`` aborts the interpreter on Windows/py3.12. Shipping it woul
 mean shipping a dependency nobody can install, so :func:`transcribe_with_pyin` is
 what runs and the swap is a change to this module alone (docs/analysis-worker.md).
 
-The one thing to know about pYIN, measured rather than assumed: it costs roughly one
-second per second of audio (14.7 s for a 4 s clip at 22 kHz, hop 512). A five minute
-song would take most of an hour. So it is given **a bounded window** - the first
-``window_seconds`` of the recording, at 11 kHz with a wider hop, which lands near
-real time - and the window it used is recorded in the result. A monophonic sketch of
-the intro in tens of seconds beats a perfect transcription of the whole track that
-never finishes.
+The one thing to know about pYIN, measured rather than assumed: the first measurement
+of it here was 14.7 s for a 4 s clip at 22 kHz, hop 512. The configuration that ships
+is cheaper - 11 kHz, hop 1024, a wider window - and on three real recordings it costs
+about a tenth of a second per second of audio (a 120 s window in 8.9-12.8 s, a 5:45
+song in 30.7 s), so a five minute song is half a minute of the worker's budget rather
+than most of an hour. It is still given **a bounded window** - the first
+``window_seconds`` of the recording - and the window it used is recorded in the
+result. ``window_seconds`` is the caller's answer to "how much of this recording",
+not a constant: the worker passes
+the whole recording when it is shorter than the cap, so a forty-second song is
+transcribed entire rather than in part (``WorkerTuning.midi_window_for``). A
+monophonic sketch of the first two minutes beats a perfect transcription of the whole
+track that never finishes.
 
 A window with nothing to track still produces a file: ``pretty_midi`` writes no track
 for an instrument with no notes, so the artifact is a tempo map with no notes in it and
@@ -75,6 +81,9 @@ class Transcription:
 
 def transcribe_with_pyin(path: Path, *, bpm: float, window_seconds: int) -> Transcription:
     """A monophonic MIDI sketch of the recording's first ``window_seconds``.
+
+    The caller decides how many, and passes the recording's own length when that is
+    shorter than the cap, so this is never asked to invent audio that is not there.
 
     This function *is* the seam: the pipeline calls it (or whatever else is passed in
     its place) and does not care how the bytes were produced. ``bpm`` is written into

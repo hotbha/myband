@@ -142,7 +142,9 @@ class Stages:
                 lambda: self._transcribe(
                     path,
                     bpm=analysis.bpm,
-                    window_seconds=self._tuning.midi_window_seconds,
+                    # The recording, up to the cap - not the cap, which would slice a
+                    # short song to a window it never filled.
+                    window_seconds=self._tuning.midi_window_for(analysis.duration_ms),
                 ),
             )
 

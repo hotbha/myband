@@ -11,6 +11,7 @@ around in, and keeps the worker's objects from having to know that settings exis
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from app.core.config import Settings, get_settings
@@ -24,7 +25,7 @@ class WorkerTuning:
     backoff_seconds: float
     timeout_seconds: float
     heartbeat_seconds: float
-    midi_window_seconds: int
+    midi_max_window_seconds: int
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> WorkerTuning:
@@ -39,5 +40,22 @@ class WorkerTuning:
             backoff_seconds=chosen.worker_retry_backoff_seconds,
             timeout_seconds=chosen.worker_job_timeout_seconds,
             heartbeat_seconds=chosen.worker_heartbeat_seconds,
-            midi_window_seconds=chosen.worker_midi_window_seconds,
+            midi_max_window_seconds=chosen.worker_midi_max_window_seconds,
         )
+
+    def midi_window_for(self, duration_ms: int) -> int:
+        """How many seconds of ``duration_ms`` of audio the MIDI sketch gets.
+
+        The whole recording, up to the cap: a three-minute song gets the cap, a
+        forty-second one gets all forty. A recording is not truncated to a window it
+        never filled.
+
+        Rounded up, and deliberately: the decoder returns only the audio that exists,
+        so asking for a fraction of a second more than the file holds costs nothing,
+        while asking for less silently drops the tail of a song that runs a little
+        past a whole number of seconds.
+
+        Lives here rather than in the MIDI module so the pipeline can ask the question
+        without importing the audio stack it is kept clear of (see ``stages``).
+        """
+        return min(math.ceil(duration_ms / 1000), self.midi_max_window_seconds)

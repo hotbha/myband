@@ -43,17 +43,17 @@ committed - exactly the window the heartbeat exists to cover - and a crashed wor
 lose the work silently. Two transactions also mean the job is genuinely visible as `running`
 while it is being worked on, which is what the UI polls for.
 
-| Step          | Where                                 | Notes                                                        |
-| ------------- | ------------------------------------- | ------------------------------------------------------------ |
-| claim + start | `queue.claim_next`, `queue.begin`     | the row lock is the whole concurrency story                  |
-| fetch         | `stages.Stages._download`             | a browser put it in R2; this is the first process to hold it |
-| duration      | `analysis.read_duration_ms`           | from the container header, so no decode                      |
-| tempo         | `analysis.detect_tempo`               | `librosa.beat.beat_track`                                    |
-| key           | `analysis.detect_key`                 | Krumhansl-Schmuckler over `chroma_cqt`, 24 keys correlated   |
-| chords        | `chords.detect_chords`                | chroma CQT -> templates -> Viterbi, over the whole song      |
-| MIDI          | `midi.transcribe_with_pyin`           | a monophonic sketch of a bounded window (see below)          |
-| store         | `artifacts.store_midi`, `store_chords`| `users/<uid>/analysis/<job id>/{transcription.mid,chords.json}` |
-| finish        | `queue.complete`, `song.set_analysis` | one transaction, or nothing                                  |
+| Step          | Where                                  | Notes                                                           |
+| ------------- | -------------------------------------- | --------------------------------------------------------------- |
+| claim + start | `queue.claim_next`, `queue.begin`      | the row lock is the whole concurrency story                     |
+| fetch         | `stages.Stages._download`              | a browser put it in R2; this is the first process to hold it    |
+| duration      | `analysis.read_duration_ms`            | from the container header, so no decode                         |
+| tempo         | `analysis.detect_tempo`                | `librosa.beat.beat_track`                                       |
+| key           | `analysis.detect_key`                  | Krumhansl-Schmuckler over `chroma_cqt`, 24 keys correlated      |
+| chords        | `chords.detect_chords`                 | chroma CQT -> templates -> Viterbi, over the whole song         |
+| MIDI          | `midi.transcribe_with_pyin`            | a monophonic sketch of a bounded window (see below)             |
+| store         | `artifacts.store_midi`, `store_chords` | `users/<uid>/analysis/<job id>/{transcription.mid,chords.json}` |
+| finish        | `queue.complete`, `song.set_analysis`  | one transaction, or nothing                                     |
 
 Duration, BPM and key are **columns on `songs`** (migration 04) rather than artifacts: the
 library list reads them per row, and reading them out of `analysis_results` would be a join
@@ -65,10 +65,10 @@ object the worker wrote is the object the user downloads, and `GET /songs/{id}/c
 
 **Chords are read from the audio, not from the MIDI.** The only symbolic artifact this process
 produces is a monophonic 30-second sketch whose notes are 69% in C2-C3 - it follows the bass - so it
-cannot carry harmony, and harmony is a fact about notes sounding *together*. The pipeline is
+cannot carry harmony, and harmony is a fact about notes sounding _together_. The pipeline is
 therefore `analysis.py` (measure) -> `chroma.py` (fold the spectrum into twelve pitch classes per
 frame, over the whole song) -> `chords.py` (score every frame against every chord in
-`chord_templates.py`, then decode the most likely *sequence* of labels with a Viterbi pass and an
+`chord_templates.py`, then decode the most likely _sequence_ of labels with a Viterbi pass and an
 explicit no-chord state). `segments.py` is the shared machinery underneath - scores to a path, a
 path to spans - because section detection will want exactly the same steps.
 
@@ -94,18 +94,22 @@ lifecycle), `stages.py` (the work, its retries and its budget), `analysis.py`, `
 Real numbers from this machine, on 4 s of 22 kHz audio. The thing to know is that the pitch
 tracker, not the detectors, is what a job's budget is spent on:
 
-| Stage                   | Time            | Note                                            |
-| ----------------------- | --------------- | ----------------------------------------------- |
-| duration                | ~0 ms           | header only                                     |
-| decode                  | ~0.1 s          | whole file, mono, 22.05 kHz                     |
-| tempo + key             | ~0.5 s          | the full recording                              |
-| chords (whole song)     | ~5 ms per second of audio | `chroma_cqt` + a 121-state Viterbi; ~2 s of numba compile is a one-off |
-| pYIN (hop 512)          | **14.7 s**      | ~3.7x realtime - the reason for the window      |
-| pYIN (11 kHz, hop 1024) | ~1 s per second | what `MYBAND_WORKER_MIDI_WINDOW_SECONDS` bounds |
+| Stage                                | Time                      | Note                                                                               |
+| ------------------------------------ | ------------------------- | ---------------------------------------------------------------------------------- |
+| duration                             | ~0 ms                     | header only                                                                        |
+| decode                               | ~0.1 s                    | whole file, mono, 22.05 kHz                                                        |
+| tempo + key                          | ~0.5 s                    | the full recording                                                                 |
+| chords (whole song)                  | ~5 ms per second of audio | `chroma_cqt` + a 121-state Viterbi; ~2 s of numba compile is a one-off             |
+| pYIN (hop 512, single cold 4 s clip) | **14.7 s**                | ~3.7x realtime - the reason for the window                                         |
+| pYIN (11 kHz, hop 1024, warm)        | ~0.1 s per second         | measured on three real recordings; what `MYBAND_WORKER_MIDI_WINDOW_SECONDS` bounds |
 
-So the MIDI is transcribed from the **first `window_seconds`** (default 30) rather than the
-whole song: a monophonic sketch of the intro in tens of seconds beats a perfect transcription
-that never finishes. The window that was used is recorded in the artifact's summary.
+So the MIDI is transcribed from the **first `window_seconds`** - the whole recording up to a cap
+of 120 s - rather than the whole song: a monophonic sketch of the first two minutes beats a
+perfect transcription that never finishes. The window that was actually used is recorded in the
+artifact's summary, so a stored result says whether it was the cap or the whole song
+(`WorkerTuning.midi_window_for`). The older "~1 s per second" figure came from one cold 4 s clip
+and is about nine times the measured warm cost of the configuration that ships; the sweep, and the
+method behind it, is [MIDI_WINDOW_REPORT.md](../MIDI_WINDOW_REPORT.md).
 
 The chords are the opposite case, and that is the point of doing them here. Measured on a warm
 process, four minutes of audio costs about a second of decode-and-chroma and under a fifth of a
@@ -195,8 +199,12 @@ kind is a bucket change as well as a code change.
 
 - **The MIDI is a monophonic sketch**, not a transcription of a mix. pYIN tracks the
   fundamental of whatever is loudest; polyphony needs a model (see basic-pitch above).
-- **The window is the intro.** A song whose material starts later gets a MIDI file that does
-  not describe it, and the summary says which window was used.
+- **The window is the first two minutes.** A song that starts later, or simply runs longer, gets a
+  MIDI file that describes only its opening: the cap is 120 s, clamped to the recording, so
+  anything shorter than the cap is transcribed whole. The summary says which window was used, which
+  is also how a row written before the change is told apart from one written after it (pipeline
+  `0.2.0` used a fixed 30 s). Raising the cap is a measurement rather than an edit:
+  [MIDI_WINDOW_REPORT.md](../MIDI_WINDOW_REPORT.md).
 - **The chords are a reading, not a chart.** A frame of chroma is matched against chord
   templates, so the detector knows nothing about voicing, about inversions outside the chord's
   own tones, or about any extended harmony beyond the ten qualities in
@@ -227,18 +235,18 @@ $env:MYBAND_TEST_DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:54322/
 uv run --directory apps/api --group worker pytest
 ```
 
-| Suite                              | Needs                                | Covers                                              |
-| ---------------------------------- | ------------------------------------ | --------------------------------------------------- |
-| `test_worker_pipeline.py`          | a database                           | claim, write, the success path, idempotency         |
-| `test_worker_pipeline_failures.py` | a database                           | every failure code, and `lost`                      |
-| `test_worker_artifacts.py`         | nothing                              | key shape, digests, the object trio                 |
-| `test_worker_runner.py`            | nothing                              | drain-once, the job cap, the idle wait, the sweep   |
-| `test_worker_heartbeat.py`         | a database                           | the thread, and what it does when the job is gone   |
-| `test_worker_analysis.py`          | the audio group                      | 120 BPM click, A minor and C major, silence refused |
+| Suite                              | Needs                                | Covers                                                        |
+| ---------------------------------- | ------------------------------------ | ------------------------------------------------------------- |
+| `test_worker_pipeline.py`          | a database                           | claim, write, the success path, idempotency                   |
+| `test_worker_pipeline_failures.py` | a database                           | every failure code, and `lost`                                |
+| `test_worker_artifacts.py`         | nothing                              | key shape, digests, the object trio                           |
+| `test_worker_runner.py`            | nothing                              | drain-once, the job cap, the idle wait, the sweep             |
+| `test_worker_heartbeat.py`         | a database                           | the thread, and what it does when the job is gone             |
+| `test_worker_analysis.py`          | the audio group                      | 120 BPM click, A minor and C major, silence refused           |
 | `test_worker_chords.py`            | the audio group                      | the four triads of a loop, an inversion, silence, the grammar |
-| `test_worker_midi.py`              | the audio group                      | a real SMF, the triad that was played, the window   |
-| `test_song_chords.py`              | a database                           | the timeline, its digest, and every refusal         |
-| `test_worker_e2e.py`               | a database, a bucket, `MYBAND_E2E=1` | the whole path: presigned PUT to rows               |
+| `test_worker_midi.py`              | the audio group                      | a real SMF, the triad that was played, the window             |
+| `test_song_chords.py`              | a database                           | the timeline, its digest, and every refusal                   |
+| `test_worker_e2e.py`               | a database, a bucket, `MYBAND_E2E=1` | the whole path: presigned PUT to rows                         |
 
 The audio suites skip themselves when the `worker` group is not installed and the database
 suites when `MYBAND_TEST_DATABASE_URL` is unset, the same convention the rest of the suite

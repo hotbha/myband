@@ -23,10 +23,11 @@ sketch, and it is the one that answers a musical question rather than a numerica
    a certain triad, and below :data:`NO_CHORD_CONFIDENCE` the segment is no chord at all.
 
 **Why not from the MIDI.** The only symbolic artifact this pipeline produces is a
-monophonic 30-second sketch whose notes are 69% in C2-C3 (it follows the bass), so it cannot
-carry harmony: harmony is a fact about notes sounding *together*, and there is no reliable
-way to recover it from a monophonic line of the intro. The chords are therefore read from the
-audio, which is where they are.
+monophonic sketch of the opening - at most the first two minutes of it - and it follows the
+bass: on the recording this was checked against, every note it wrote in the window sat in
+C2-C3. Harmony is a fact about notes sounding *together*, and there is no reliable way to
+recover it from a monophonic line of the intro. The chords are therefore read from the audio,
+which is where they are.
 
 **Beat and bar snapping is deliberately off in v1.** Segments are frame-accurate. Snapping
 would put a wrong downbeat on every segment instead of a slightly ragged right one, and

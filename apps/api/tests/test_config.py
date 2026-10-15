@@ -76,3 +76,66 @@ def test_development_boots_without_third_party_keys(
 
     assert settings.is_production is False
     assert settings.cors_origin_list == ["http://localhost:3000"]
+
+
+# --- The MIDI window -------------------------------------------------------------
+#
+# The window a job uses is a *cap* now. `MYBAND_WORKER_MIDI_MAX_WINDOW_SECONDS` says how
+# much of a recording one job may transcribe and `WorkerTuning.midi_window_for` takes the
+# smaller of that and the recording, so the field's name had to change with its meaning.
+# The old name still sets the same field, which is the part worth pinning: an operator who
+# asked for 30 seconds was asking for a *smaller* window, and silently handing them 120
+# would be a surprise in the direction of cost.
+
+
+def test_the_midi_window_defaults_to_the_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A fresh install gets 120 seconds, which covers every beta recording but two."""
+    monkeypatch.setenv("MYBAND_ENV", "development")
+    monkeypatch.setenv("DATABASE_URL", DEVELOPMENT_URL)
+    monkeypatch.delenv("MYBAND_WORKER_MIDI_MAX_WINDOW_SECONDS", raising=False)
+    monkeypatch.delenv("MYBAND_WORKER_MIDI_WINDOW_SECONDS", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.worker_midi_max_window_seconds == 120
+
+
+def test_the_legacy_window_name_still_sets_the_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`MYBAND_WORKER_MIDI_WINDOW_SECONDS` was the name before the field was a cap.
+
+    Its old meaning was "transcribe this many seconds of every recording", which for any
+    song at least that long is exactly what a cap of that size still does.
+    """
+    monkeypatch.setenv("MYBAND_ENV", "development")
+    monkeypatch.setenv("DATABASE_URL", DEVELOPMENT_URL)
+    monkeypatch.setenv("MYBAND_WORKER_MIDI_WINDOW_SECONDS", "30")
+    monkeypatch.delenv("MYBAND_WORKER_MIDI_MAX_WINDOW_SECONDS", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.worker_midi_max_window_seconds == 30
+
+
+def test_the_current_window_name_wins_over_the_legacy_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both set is the migration window: the name an operator just wrote is the one read."""
+    monkeypatch.setenv("MYBAND_ENV", "development")
+    monkeypatch.setenv("DATABASE_URL", DEVELOPMENT_URL)
+    monkeypatch.setenv("MYBAND_WORKER_MIDI_MAX_WINDOW_SECONDS", "90")
+    monkeypatch.setenv("MYBAND_WORKER_MIDI_WINDOW_SECONDS", "30")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.worker_midi_max_window_seconds == 90
+
+
+@pytest.mark.parametrize("value", ["4", "601"])
+def test_the_window_is_bounded_at_both_ends(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """`ge=5, le=600`: a window that cannot transcribe anything, or that outlives the lease."""
+    monkeypatch.setenv("MYBAND_ENV", "development")
+    monkeypatch.setenv("DATABASE_URL", DEVELOPMENT_URL)
+    monkeypatch.setenv("MYBAND_WORKER_MIDI_MAX_WINDOW_SECONDS", value)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)

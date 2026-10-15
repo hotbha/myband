@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { AmbientBackground } from "./ambient-background";
+import { AmbientBackground } from "@/features/design-system/components/ambient-background";
 
 /**
  * Everything a marketing page needs around it, and nothing it does not.
@@ -32,7 +32,7 @@ export function MarketingShell({ children }: { children: ReactNode }) {
         Skip to content
       </a>
 
-      <AmbientBackground />
+      <AmbientBackground variant="marketing" />
 
       <noscript>
         <style>{`[data-reveal]{opacity:1 !important;transform:none !important;animation:none !important}`}</style>

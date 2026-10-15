@@ -6,6 +6,7 @@ import { useCallback, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { Panel, PanelHeader } from "@/features/design-system/components/panel";
 import { messageFor } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -27,7 +28,14 @@ type Phase = "idle" | "uploading" | "finishing";
  *
  * The state is one small machine rather than a handful of booleans, so exactly one
  * of idle/uploading/finishing holds and "the bar is showing while the button is
- * disabled" cannot drift apart.
+ * disabled" cannot drift apart. Each of the five states a person can see - idle,
+ * chosen, uploading, finishing, queued - is drawn differently on purpose: an upload that
+ * looks the same while it is working and while it is waiting on the API is an upload
+ * nobody can tell apart from a stuck one.
+ *
+ * The drop zone never disappears, including after a refusal. It is the only way to pick a
+ * different file, and replacing it with a red sentence would leave somebody looking at a
+ * problem with no way to act on it.
  */
 export function UploadDropzone() {
   const router = useRouter();
@@ -102,61 +110,24 @@ export function UploadDropzone() {
   const busy = phase !== "idle";
 
   return (
-    <section className="space-y-4 rounded-lg border bg-card p-6 text-card-foreground">
-      <div className="space-y-1">
-        <h2 className="text-lg font-medium">Upload a track</h2>
-        <p className="text-sm text-muted-foreground">
-          MP3 or WAV, up to {MAX_UPLOAD_MIB} MiB. The file goes straight to storage; the API only
-          signs the URL for it.
-        </p>
-      </div>
+    <Panel aria-labelledby="upload-heading" className="p-4 sm:p-5">
+      <PanelHeader id="upload-heading" eyebrow="Upload" title="Analyse a track" />
 
-      <div
-        onDragOver={(event) => {
-          event.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(event) => {
-          event.preventDefault();
-          setDragging(false);
-          choose(event.dataTransfer.files.item(0));
-        }}
-        className={cn(
-          "rounded-lg border border-dashed p-8 text-center transition-colors",
-          dragging ? "border-ring bg-accent" : "border-border",
-        )}
-      >
-        <input
-          ref={fileInput}
-          type="file"
-          accept={ACCEPT}
-          className="hidden"
-          onChange={(event) => {
-            choose(event.target.files?.item(0));
-            // Lets the very same file be chosen twice in a row.
-            event.target.value = "";
-          }}
-        />
-        <p className="text-sm text-muted-foreground">Drag a track here, or</p>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="mt-3"
-          disabled={busy}
-          onClick={() => fileInput.current?.click()}
-        >
-          Choose a file
-        </Button>
-      </div>
+      <p className="mt-2 text-xs/relaxed text-muted-foreground">
+        MP3 or WAV, up to {MAX_UPLOAD_MIB} MiB. The file goes straight to storage; the API only
+        signs the URL for it.
+      </p>
 
+      {/* Chosen, so the zone is replaced rather than annotated: one file, one action. */}
       {file ? (
-        <div className="flex items-center justify-between gap-4 rounded-md border p-3">
+        <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5">
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">{file.name}</p>
-            <p className="text-xs text-muted-foreground">{formatBytes(file.size)}</p>
+            <p className="mt-0.5 font-mono text-xs text-muted-foreground tabular-nums">
+              {formatBytes(file.size)}
+            </p>
           </div>
+
           <div className="flex shrink-0 gap-2">
             <Button type="button" size="sm" disabled={busy} onClick={upload}>
               {busy ? "Working..." : "Analyse"}
@@ -172,12 +143,58 @@ export function UploadDropzone() {
             </Button>
           </div>
         </div>
-      ) : null}
+      ) : (
+        <div
+          onDragOver={(event) => {
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragging(false);
+            choose(event.dataTransfer.files.item(0));
+          }}
+          className={cn(
+            "mt-4 rounded-xl border border-dashed p-6 text-center transition-colors",
+            dragging ? "border-ring bg-accent" : "border-border",
+          )}
+        >
+          <input
+            ref={fileInput}
+            type="file"
+            accept={ACCEPT}
+            className="hidden"
+            onChange={(event) => {
+              choose(event.target.files?.item(0));
+              // Lets the very same file be chosen twice in a row.
+              event.target.value = "";
+            }}
+          />
+
+          <p className="text-sm text-muted-foreground">Drag a track here, or</p>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-3"
+            disabled={busy}
+            onClick={() => fileInput.current?.click()}
+          >
+            Choose a file
+          </Button>
+        </div>
+      )}
 
       {busy ? (
-        <div className="space-y-2">
-          <Progress value={percent} />
-          <p className="text-xs text-muted-foreground">
+        <div className="mt-4 space-y-2">
+          <Progress value={percent} className="h-1.5" aria-label="Upload progress" />
+
+          {/* Two sentences, because there are two different waits: the bytes going to
+              storage, which the browser can report, and the two API calls after them,
+              which it cannot. */}
+          <p role="status" className="text-xs text-muted-foreground">
             {phase === "uploading"
               ? `Uploading - ${percent}%`
               : "Uploaded. Confirming the file and queueing the analysis..."}
@@ -188,12 +205,13 @@ export function UploadDropzone() {
       {queued ? (
         <div
           role="status"
-          className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground"
+          className="mt-4 rounded-xl border border-pulse/25 bg-pulse/[0.08] px-3 py-2.5"
         >
-          <p className="font-medium text-foreground">{queued.song.title} is queued for analysis.</p>
+          <p className="text-sm font-medium">{queued.song.title} is queued for analysis.</p>
+
           {queued.job ? (
-            <p className="mt-0.5 text-xs">
-              Job {queued.job.id.slice(0, 8)} · {queued.job.status} · pipeline{" "}
+            <p className="mt-1 truncate font-mono text-[0.6rem] tracking-[0.12em] text-muted-foreground uppercase">
+              job {queued.job.id.slice(0, 8)} · {queued.job.status} · pipeline{" "}
               {queued.job.pipeline_version}
             </p>
           ) : null}
@@ -205,11 +223,11 @@ export function UploadDropzone() {
         // action failure: `alert` interrupts a screen reader, which a failure earns.
         <p
           role="alert"
-          className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+          className="mt-4 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm text-destructive"
         >
           {error}
         </p>
       ) : null}
-    </section>
+    </Panel>
   );
 }

@@ -6,7 +6,7 @@ import {
   type SongWithJob,
 } from "@myband/shared";
 
-import { apiFetch, requireBaseUrl } from "@/lib/api";
+import { apiFetch, messageFor, requireBaseUrl } from "@/lib/api";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /**
@@ -22,8 +22,14 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
  * the claims before it looks at a single row.
  */
 
-/** How many songs the dashboard shows. The API caps `limit` at 100. */
-const LIBRARY_LIMIT = 20;
+/**
+ * How many songs a screen shows. The API caps `limit` at 100.
+ *
+ * Exported because the screen that renders the list has to be able to say when the list is
+ * a window rather than everything: a rail that silently stops at twenty reads as "you have
+ * twenty songs".
+ */
+export const LIBRARY_LIMIT = 20;
 
 function baseUrl(): string {
   return requireBaseUrl(process.env.API_BASE_URL, "API_BASE_URL");
@@ -51,6 +57,26 @@ export async function fetchLibrary(): Promise<SongWithJob[]> {
   );
 
   return songs;
+}
+
+/**
+ * The library, or why it is not here.
+ *
+ * A failing API is reported rather than thrown. An exception inside a Server Component
+ * replaces the whole route with an error screen, which would take the uploader down with it
+ * - and the uploader is what somebody would use to try again. So the shape of the failure
+ * is part of this module's contract, and everything that draws the library takes the union
+ * rather than an array, which is what makes "the list is empty" and "the list could not be
+ * read" impossible to confuse.
+ */
+export type Library = { ok: true; songs: SongWithJob[] } | { ok: false; message: string };
+
+export async function loadLibrary(): Promise<Library> {
+  try {
+    return { ok: true, songs: await fetchLibrary() };
+  } catch (cause) {
+    return { ok: false, message: messageFor(cause) };
+  }
 }
 
 /** One song and its current job: what a screen about a single track is about. */

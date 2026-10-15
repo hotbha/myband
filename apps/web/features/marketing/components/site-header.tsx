@@ -1,10 +1,11 @@
 "use client";
 
-import { AudioWaveform, Menu, X } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { BrandMark } from "@/features/design-system/components/brand-mark";
 import { cn } from "@/lib/utils";
 
 /** The page's sections, in the order they appear. One list, so the menu cannot drift. */
@@ -54,17 +55,7 @@ export function SiteHeader({ signedIn }: { signedIn: boolean }) {
       )}
     >
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-6 px-5 sm:px-6">
-        <Link
-          href="/"
-          className="flex items-center gap-2.5 rounded-lg outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-        >
-          <span className="grid size-8 place-items-center rounded-lg bg-gradient-to-br from-signal to-signal-strong shadow-[0_8px_24px_-10px_var(--signal)]">
-            <AudioWaveform className="size-4 text-white" aria-hidden />
-          </span>
-          <span className="font-display text-base font-semibold tracking-tight">
-            MyBand<span className="text-muted-foreground">.video</span>
-          </span>
-        </Link>
+        <BrandMark />
 
         <nav aria-label="Sections" className="hidden lg:block">
           <ul className="flex items-center gap-7 text-sm text-muted-foreground">

@@ -1,86 +1,113 @@
 import type { Metadata } from "next";
 
-import type { SongWithJob } from "@myband/shared";
-
-import { LogoutButton } from "@/features/auth/components/logout-button";
 import { requireIdentity } from "@/features/auth/session";
-import { LibraryRefresh } from "@/features/uploads/components/library-refresh";
-import { SongList } from "@/features/uploads/components/song-list";
+import { EmptyState } from "@/features/design-system/components/empty-state";
+import { Panel, PanelHeader } from "@/features/design-system/components/panel";
+import { AppShell } from "@/features/shell/components/app-shell";
+import { AnalysisCard } from "@/features/uploads/components/analysis-card";
+import { LibraryMetrics } from "@/features/uploads/components/library-metrics";
+import { LibraryRail } from "@/features/uploads/components/library-rail";
 import { UploadDropzone } from "@/features/uploads/components/upload-dropzone";
+import { WorkInFlight } from "@/features/uploads/components/work-in-flight";
 import { hasWorkInFlight } from "@/features/uploads/jobs";
-import { fetchLibrary } from "@/features/uploads/server-api";
-import { messageFor } from "@/lib/api";
+import { isAnalysed } from "@/features/uploads/library-stats";
+import { LIBRARY_LIMIT, loadLibrary } from "@/features/uploads/server-api";
 
 export const metadata: Metadata = {
   title: "Dashboard - MyBand.video",
 };
 
 /**
- * Protected route.
+ * The workspace: everything a returning user needs, in one screen.
  *
- * Middleware turns anonymous requests away before they get here; this second check
- * is the actual authorization boundary, so the page is safe even if the matcher is
- * narrowed or middleware is bypassed.
+ * Three regions, and each one answers a different question. The **library** (left) is the
+ * inventory: what do I have? The **analyses** (centre) are the results: what did it find
+ * out? The **utility rail** is the work: what can I do, and what is running? All three are
+ * drawn from one array of rows, fetched once in the request that renders the page, so
+ * nothing here can disagree with anything else here.
  *
- * The library is read on the server, in the same request that renders it: one round
- * trip to the API, no loading spinner, and nothing for the browser to fetch on
- * mount. Two client components sit on top of it - the uploader, which refreshes the page
- * when it has queued a job, and the poller, which refreshes it while a job is in flight.
- * Neither of them owns a row.
+ * The columns are chosen by width, and the order they collapse in is the design decision
+ * rather than an accident of the markup:
+ *
+ * * **one column** (below 768px) - upload, activity, analyses, library, metrics. The action
+ *   first, then whether it is running, then the results, then the inventory, then the
+ *   summary. Mobile is a scroll, so the order is a priority order.
+ * * **two columns** (768px and up) - the library rail on the left, everything else in the
+ *   main column.
+ * * **three columns** (1280px and up) - rail, analyses, utility rail. The utility column
+ *   only appears here because below 1280px the three fixed-width columns and their gaps do
+ *   not fit in the viewport, and three cramped columns are worse than two comfortable ones.
+ *
+ * At 768px and up the placement is explicit (`col-start`/`row-start` on each region), which
+ * is what lets the *document* order stay the mobile priority order while the *visual* order
+ * is a workspace. See docs/WIREFRAMES.md, section 4.
+ *
+ * The page is a Server Component and reads the library in the same request that renders it:
+ * one round trip to the API, no loading spinner, and nothing for the browser to fetch on
+ * mount. Two Client Components sit on top of it - the uploader, which refreshes the page
+ * when it has queued a job, and the poller inside the rail, which refreshes it while a job
+ * is in flight. Neither of them owns a row.
  */
 export default async function DashboardPage() {
   const identity = await requireIdentity("/dashboard");
   const library = await loadLibrary();
 
+  const songs = library.ok ? library.songs : [];
+  const analysed = songs.filter(isAnalysed);
+
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-8 px-6 py-12">
-      <header className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">
-            Signed in as {identity.name ?? identity.email ?? identity.id}
-          </p>
+    <AppShell identity={identity}>
+      <div className="grid items-start gap-6 md:grid-cols-[17.5rem_minmax(0,1fr)] xl:grid-cols-[17.5rem_minmax(0,1fr)_20rem]">
+        <div className="md:col-start-2 md:row-start-1 xl:col-start-3 xl:row-start-1">
+          <UploadDropzone />
         </div>
-        <LogoutButton />
-      </header>
 
-      <UploadDropzone />
-
-      <section className="space-y-4">
-        <div className="flex items-baseline justify-between gap-4">
-          <h2 className="text-lg font-medium">Library</h2>
-          {/* Renders nothing but the status line it is worth: while a worker holds a
-              job, the list below is a snapshot that will be wrong shortly. */}
-          {library.ok ? <LibraryRefresh active={hasWorkInFlight(library.songs)} /> : null}
+        <div className="md:col-start-2 md:row-start-2 xl:col-start-3 xl:row-start-3">
+          <WorkInFlight songs={songs} />
         </div>
-        {library.ok ? (
-          <SongList songs={library.songs} />
-        ) : (
-          <p
-            role="alert"
-            className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-          >
-            The library could not be loaded. {library.message}
-          </p>
-        )}
-      </section>
-    </main>
+
+        <div className="md:col-start-2 md:row-start-3 xl:col-start-2 xl:row-span-3 xl:row-start-1">
+          <Panel aria-labelledby="analyses-heading">
+            <PanelHeader
+              id="analyses-heading"
+              eyebrow="Recent analyses"
+              title="What the analyser found"
+              right={
+                <span className="font-mono text-xs text-muted-foreground tabular-nums">
+                  {analysed.length} of {songs.length}
+                </span>
+              }
+            />
+
+            {analysed.length === 0 ? (
+              <EmptyState className="mt-4 rounded-xl">
+                Nothing has been measured yet. Upload a track and its tempo, key and chords appear
+                here.
+              </EmptyState>
+            ) : (
+              <ul className="mt-4 space-y-3">
+                {analysed.map((song) => (
+                  <li key={song.id}>
+                    <AnalysisCard song={song} />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
+        </div>
+
+        <div className="md:col-start-1 md:row-span-4 md:row-start-1 xl:col-start-1 xl:row-span-3">
+          <LibraryRail
+            library={library}
+            active={library.ok && hasWorkInFlight(library.songs)}
+            limit={LIBRARY_LIMIT}
+          />
+        </div>
+
+        <div className="md:col-start-2 md:row-start-4 xl:col-start-3 xl:row-start-2">
+          <LibraryMetrics songs={songs} />
+        </div>
+      </div>
+    </AppShell>
   );
-}
-
-type Library = { ok: true; songs: SongWithJob[] } | { ok: false; message: string };
-
-/**
- * The library, or why it is not here.
- *
- * A failing API is reported in the page rather than thrown: an exception in a Server
- * Component replaces the whole route with an error screen, which would take the
- * uploader down with it - and the uploader is what someone would use to try again.
- */
-async function loadLibrary(): Promise<Library> {
-  try {
-    return { ok: true, songs: await fetchLibrary() };
-  } catch (cause) {
-    return { ok: false, message: messageFor(cause) };
-  }
 }

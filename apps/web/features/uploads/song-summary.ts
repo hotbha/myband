@@ -38,3 +38,24 @@ export function durationOf(song: SongWithJob): string | null {
   const seconds = Math.round(song.duration_ms / 1000);
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
+
+/**
+ * A total length of audio, in hours and minutes.
+ *
+ * For a sum rather than one recording, so `m:ss` is the wrong shape: nobody reads
+ * `72:15` as an hour and twelve minutes. Minutes are dropped once there is an hour to
+ * report, because the difference between "1h 12m" and "1h 12m 4s" is not a difference
+ * anyone acts on.
+ */
+export function formatTotalDuration(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+
+  return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`;
+}

@@ -5,6 +5,11 @@
    registered explicitly or their class names are dropped from the bundle. */
 @source "../../../packages/shared/src";
 
+/* ...and `docs/` must be kept out of it. The design system and the wireframes name
+   utility classes in their tables and code fences, and a specification is not a
+   template: scanning them would put CSS in the bundle for classes nothing renders. */
+@source not "../../../docs";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -52,10 +57,10 @@
   --font-display: var(--font-bricolage), var(--font-jakarta), ui-sans-serif, sans-serif;
   --font-mono: var(--font-jetbrains), ui-monospace, "SFMono-Regular", monospace;
 
-  /* The marketing palette. `--color-signal` is the one accent: it is spent on the
+  /* The product palette. `--color-signal` is the one accent: it is spent on the
      call to action, the waveform and the metering, and nowhere else. The values
-     themselves are scoped to `.marketing` so the token names resolve only inside a
-     marketing surface rather than leaking into the app shell. */
+     themselves are scoped to a surface (`.marketing` or `.product`) so the token
+     names resolve inside one rather than on the bare document - see docs/DESIGN_SYSTEM.md. */
   --color-canvas: var(--canvas);
   --color-signal: var(--signal);
   --color-signal-soft: var(--signal-soft);
@@ -138,18 +143,26 @@
 }
 
 /**
- * The marketing surface.
+ * The product surface.
  *
  * It re-points the same token names the rest of the app already uses, which is what
- * lets every shadcn/ui component inside it - Card, Badge, Tabs, Accordion, Button -
- * come out on-palette without a single variant being forked. Scoped rather than put
- * on `:root` or `.dark` so the dashboard, the song page and the login form keep the
- * neutral theme they were reviewed with.
+ * lets every shadcn/ui component inside it - Card, Badge, Tabs, Accordion, Button,
+ * Input - come out on-palette without a single variant being forked.
+ *
+ * Two surfaces opt into it and they share one declaration:
+ *
+ * * `.marketing` is the landing page.
+ * * `.product` is the workspace - the dashboard, the song page and sign-in.
+ *
+ * They are the same block rather than two copies because the point of the change that
+ * added `.product` was that the app and the landing page are one product. A second
+ * copy would be a second palette waiting to drift.
  *
  * Declared after `.dark` on purpose: both blocks are one class deep, so order is what
- * decides, and the marketing surface should win wherever the two overlap.
+ * decides, and a surface should win wherever the two overlap.
  */
-.marketing {
+.marketing,
+.product {
   --canvas: oklch(0.145 0.018 285);
   --signal: oklch(0.66 0.19 287);
   --signal-soft: oklch(0.79 0.11 288);
@@ -179,14 +192,15 @@
 }
 
 /**
- * The page behind the marketing surface has to agree with it.
+ * The page behind a surface has to agree with it.
  *
- * The landing page paints its own dark canvas, but the document body is still the
- * app shell's light background - and on iOS a rubber-band scroll at the top or
- * bottom reveals it as a white flash. `:has()` is what keeps this honest: the rule
- * only applies while a marketing surface is actually on the page.
+ * A surface paints its own dark canvas, but the document body is still the app shell's
+ * light background - and on iOS a rubber-band scroll at the top or bottom reveals it as
+ * a white flash. `:has()` is what keeps this honest: the rule only applies while a
+ * surface is actually on the page, and it names no surface in particular, so a new one
+ * is covered the day it is added.
  */
-body:has([data-surface="marketing"]) {
+body:has([data-surface]) {
   background-color: oklch(0.145 0.018 285);
 }
 

@@ -14,6 +14,11 @@ import type { JobStatus, SongWithJob } from "@myband/shared";
  */
 const IN_FLIGHT: ReadonlySet<JobStatus> = new Set<JobStatus>(["queued", "dispatched", "running"]);
 
+/** Whether a single job is waiting on, or being held by, a worker. */
+export function isInFlight(status: JobStatus): boolean {
+  return IN_FLIGHT.has(status);
+}
+
 /** Whether anything in the library is waiting on a worker. */
 export function hasWorkInFlight(songs: SongWithJob[]): boolean {
   return songs.some((song) => song.job !== null && IN_FLIGHT.has(song.job.status));

@@ -141,7 +141,7 @@ export function BetaAccess() {
 
                 <p className="text-xs/relaxed text-muted-foreground">
                   This takes you to sign-up with your address filled in. Seats are activated by
-                  hand, and you can delete a track - and its files - whenever you want.
+                  hand.
                 </p>
               </form>
             </div>

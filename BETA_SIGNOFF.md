@@ -237,9 +237,10 @@ New in this run, lettered `N` so nobody confuses them with the register's `R`:
 ## 8. Recommended first user cohort
 
 What the product can honestly give someone today: a duration, a BPM, a key, a chord timeline with
-confidence and two readings of it, and a **30-second monophonic MIDI sketch**. What it cannot give
-them: a transcription of the mix, song sections, a delete, a retry, or a quota. The first ten people
-should be chosen against that list rather than against the ambition.
+confidence and two readings of it, a monophonic MIDI sketch of up to the first two minutes, and the
+song's form written as labelled sections. What it cannot give them: a transcription of the mix, a
+delete, a retry, or a quota. The first ten people should be chosen against that list rather than
+against the ambition.
 
 **Ten hand-picked people, in roughly this mix:**
 
@@ -248,7 +249,8 @@ should be chosen against that list rather than against the ambition.
    and that difference is the difference between a fix and a mystery (N3).
 2. **Two DAW users who use MIDI every day.** They will judge the sketch for what it is, and they are
    the people whose "this is useless because..." is worth more than a compliment. Set the expectation
-   in the invite: first 30 seconds, one line, a starting point to drag in - not a transcription.
+   in the invite: the opening two minutes at most, one line, a starting point to drag in - not a
+   transcription.
 3. **One person who will try to break the upload rules.** A 250 MiB file, a `.flac`, a text file
    renamed `.mp3`, a file with no extension, a filename with an emoji in it. The rules are
    implemented (`file-rules.ts` client-side, `upload_rules.py` server-side) and this run only ever
@@ -268,6 +270,12 @@ recording can take a minute or two, because the pitch tracker costs about a seco
 audio and the worker runs one job at a time. The three songs in this run took 16.3 s, 10.5 s and 2.4 s
 
 - and a second worker is a separate process, not a setting.
+
+**Corrected 2026-10-16, for the v0.4 release.** Two claims in this section were written for the
+0.2.0/0.3.0 pipeline and were wrong by the time the release was cut: the MIDI cap is 120 s rather
+than a fixed 30 s slice, and a song's form is one of the things a beta user does get. Section 8's
+list above is corrected in place. Sections 1-7 and 9 are the measurements and the conditions of the
+2026-10-10 run and are unchanged.
 
 ## 9. What this run does not settle
 

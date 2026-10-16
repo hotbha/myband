@@ -1,8 +1,10 @@
 import {
   chordsSchema,
+  sectionsSchema,
   songListSchema,
   songWithJobSchema,
   type Chords,
+  type Sections,
   type SongWithJob,
 } from "@myband/shared";
 
@@ -98,6 +100,20 @@ export async function fetchChords(songId: string): Promise<Chords> {
   return apiFetch(
     { path: `/songs/${songId}/chords`, baseUrl: baseUrl(), token: await requireToken() },
     chordsSchema,
+  );
+}
+
+/**
+ * A song's sections (`GET /songs/{id}/sections`).
+ *
+ * The same read as the chord timeline and the same reasoning: the list is what a screen renders, so
+ * the API fetches the object and this is handed the answer. Ownership was checked before any of it
+ * was returned.
+ */
+export async function fetchSections(songId: string): Promise<Sections> {
+  return apiFetch(
+    { path: `/songs/${songId}/sections`, baseUrl: baseUrl(), token: await requireToken() },
+    sectionsSchema,
   );
 }
 

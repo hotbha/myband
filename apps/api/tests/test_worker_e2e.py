@@ -1,8 +1,9 @@
 """One complete analysis: upload, queue, process, results.
 
 The only suite that uses all three real parts at once - the upload lifecycle against a real
-bucket, the worker against real BPM/key/MIDI detection, and a real database - because the
-question it answers is "does the product work", which no arrangement of fakes can answer.
+bucket, the worker against real tempo, key, chord, section and MIDI detection, and a real
+database - because the question it answers is "does the product work", which no arrangement of
+fakes can answer.
 
 It is the slow one: a real HTTP PUT to the bucket, a real decode, a real transcription.
 That is the point, so it is gated behind its own flag rather than running with the rest::
@@ -31,7 +32,7 @@ from app.models import analysis_job, analysis_result, song
 from app.models.analysis_job import AnalysisJob
 from app.services import queue, uploads
 from app.services.storage import get_object_store
-from app.workers import analysis, chords, midi
+from app.workers import analysis, chords, midi, sections
 from app.workers.pipeline import Pipeline
 from botocore.config import Config
 from tests import audio
@@ -102,6 +103,7 @@ def test_an_uploaded_song_is_analysed_end_to_end(
     upload_key: str | None = None
     midi_key: str | None = None
     chords_key: str | None = None
+    sections_key: str | None = None
 
     with connect(url=TEST_DATABASE_URL) as conn:
         user_id = make_user(on=conn)
@@ -153,6 +155,7 @@ def test_an_uploaded_song_is_analysed_end_to_end(
                 store=store,
                 analyze=analysis.analyze,
                 detect_chords=chords.detect_chords,
+                detect_sections=sections.detect_sections,
                 transcribe=midi.transcribe_with_pyin,
             )
 
@@ -187,7 +190,7 @@ def test_an_uploaded_song_is_analysed_end_to_end(
             assert analysed.musical_key == EXPECTED_KEY
 
             rows = {row.kind: row for row in analysis_result.list_for_job(conn, job_id)}
-            assert set(rows) == {"bpm", "key", "chords", "midi"}
+            assert set(rows) == {"bpm", "key", "chords", "sections", "midi"}
             assert rows["bpm"].summary["bpm"] == pytest.approx(EXPECTED_BPM, rel=0.08)
             assert rows["key"].summary["key"] == EXPECTED_KEY
 
@@ -213,8 +216,25 @@ def test_an_uploaded_song_is_analysed_end_to_end(
             assert head is not None
             assert head.bytes == midi_row.object_bytes
             assert head.content_type == "audio/midi"
+
+            # The sections, read off the same audio and stored beside the chords.
+            sections_row = rows["sections"]
+            assert sections_row.object_key is not None
+            sections_key = sections_row.object_key
+            assert sections_row.summary["detector"] == "chroma-pool-cluster-viterbi"
+            assert sections_row.summary["sections"] >= 1
+            # Eight seconds is one piece of music however it is cut, so its form is one letter.
+            assert sections_row.summary["form"] == "A"
+            sections_head = store.head(object_key=sections_key)
+            assert sections_head is not None
+            assert sections_head.bytes == sections_row.object_bytes
+            assert sections_head.content_type == "application/json"
         finally:
-            _clean_up(conn, user_id=user_id, keys=[upload_key, midi_key, chords_key])
+            _clean_up(
+                conn,
+                user_id=user_id,
+                keys=[upload_key, midi_key, chords_key, sections_key],
+            )
 
 
 def _clean_up(conn: psycopg.Connection, *, user_id: UUID, keys: list[str | None]) -> None:

@@ -29,6 +29,7 @@ from tests.fakes import (
     FakeAnalysis,
     FakeChordTimeline,
     FakeObjectStore,
+    FakeSectionTimeline,
     FakeTranscription,
     ScriptedStage,
 )
@@ -126,7 +127,7 @@ def test_the_artifacts_describe_themselves(
     make_object_key: Callable[..., str],
     own_queue: None,
 ) -> None:
-    """The rows a succeeded job writes, and the two objects the rows and the bucket agree about.
+    """The rows a succeeded job writes, and the three objects the rows and the bucket agree about.
 
     The artifacts' ``object_key``s satisfying ``analysis_results_object_key_check`` is part of the
     assertion: the insert would have been refused otherwise, so the key shapes are verified against
@@ -138,7 +139,7 @@ def test_the_artifacts_describe_themselves(
     worker(conn, store, transcribe=transcriber).run_once()
 
     rows = {row.kind: row for row in analysis_result.list_for_job(conn, job.id)}
-    assert set(rows) == {"bpm", "key", "chords", "midi"}
+    assert set(rows) == {"bpm", "key", "chords", "sections", "midi"}
 
     assert rows["bpm"].summary == {"bpm": 120.0, "beats": 16}
     assert rows["key"].summary == {"key": "A minor", "strength": 0.9}
@@ -161,6 +162,28 @@ def test_the_artifacts_describe_themselves(
     assert timeline["key"] == "A minor"
     assert timeline["segments"] == [
         {"start_ms": 0, "end_ms": 4000, "chord": "Am", "confidence": 0.9}
+    ]
+
+    sections = rows["sections"]
+    assert sections.object_key == artifacts.sections_object_key(user_id=user_id, job_id=job.id)
+    assert sections.object_bytes == len(artifacts.encode_sections(FakeSectionTimeline()))
+    assert sections.object_content_type == "application/json"
+    # The digest is the form, not the list: three sections that say A B A, and one number for
+    # how tightly the detector's own blocks agreed inside them.
+    assert sections.summary == {
+        "detector": "fake-section-detector",
+        "vocabulary": "1.0",
+        "sections": 3,
+        "form": "A B A",
+        "confidence": 0.8,
+    }
+
+    shape = json.loads(store.download(object_key=sections.object_key))
+    assert shape["hop_ms"] == FakeSectionTimeline().hop_ms
+    assert [(section["label"], section["start_ms"]) for section in shape["sections"]] == [
+        ("A", 0),
+        ("B", 3000),
+        ("A", 6000),
     ]
 
     midi = rows["midi"]
@@ -240,5 +263,6 @@ def test_a_second_pass_over_a_finished_job_writes_nothing(
 
     assert second.status == "lost"
     assert analysis_result.list_for_job(conn, job.id) == after_first
-    assert len(store.bodies) == 3  # the source audio, one MIDI, one chord timeline
+    # The source audio, one MIDI, one chord timeline and one section list.
+    assert len(store.bodies) == 4
     assert analysis_job.get(conn, job.id).finished_at == finished.finished_at

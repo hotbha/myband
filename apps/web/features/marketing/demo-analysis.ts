@@ -64,7 +64,14 @@ export type SampledTrack = {
   key: string;
 };
 
-/** The pipeline that produced every result on this page. `MYBAND_PIPELINE_VERSION`. */
+/**
+ * The pipeline that produced every result on this page.
+ *
+ * Pinned to the data, not to `MYBAND_PIPELINE_VERSION`: the figures below are one real row, and a
+ * badge that tracked the setting would credit a 0.4.0 run for numbers it did not produce. The note
+ * count in `FEATURED_ANALYSIS.midi` is a 30 s window for the same reason. Re-running the demo
+ * against a current job is what moves both.
+ */
 export const PIPELINE_VERSION = "0.2.0";
 
 /** The song the hero panel and the chord preview are built from. */

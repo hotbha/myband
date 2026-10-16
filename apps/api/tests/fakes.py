@@ -160,6 +160,36 @@ class FakeChordTimeline:
     hop_ms: int = 93
 
 
+@dataclass(frozen=True, slots=True)
+class FakeSection:
+    """One section, shape for shape with ``sections.Section``."""
+
+    start_ms: int = 0
+    end_ms: int = 4000
+    label: str = "A"
+    confidence: float = 0.8
+
+
+@dataclass(frozen=True, slots=True)
+class FakeSectionTimeline:
+    """What a section detector hands back, shape for shape. See :class:`FakeAnalysis`.
+
+    Three sections that say ``A B A``, because a digest read off a single one would not
+    exercise the form at all - and a repeat is the one thing a form exists to show. They stop
+    at the scripted analysis's 8 000 ms, so the list covers the recording the way a real one
+    does.
+    """
+
+    sections: tuple[FakeSection, ...] = (
+        FakeSection(start_ms=0, end_ms=3000, label="A", confidence=0.9),
+        FakeSection(start_ms=3000, end_ms=6000, label="B", confidence=0.7),
+        FakeSection(start_ms=6000, end_ms=8000, label="A", confidence=0.8),
+    )
+    name: str = "fake-section-detector"
+    vocabulary: str = "1.0"
+    hop_ms: int = 4000
+
+
 class ScriptedStage:
     """A stage that does what the test scripted: a value, or an exception.
 

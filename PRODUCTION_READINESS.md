@@ -4,10 +4,10 @@ What has to be true before MyBand.video is opened to the public, and what is kno
 missing. It is a register rather than a promise: every risk below is one we have looked at and
 made a decision about, and the decision is written next to it.
 
-**Status: pre-beta.** The pipeline produces duration, BPM, key, a chord timeline and a MIDI
-sketch. Song sections are the next analysis stage, and the milestone after that is the public
-beta. The mechanics the product rests on - the upload lifecycle, the queue state machine, the
-analysis worker, the storage seam - are implemented and covered by `pnpm test:api`;
+**Status: pre-beta.** The pipeline produces duration, BPM, key, a chord timeline, a section list
+and a MIDI sketch; the public beta is the next milestone. The mechanics the product rests on - the
+upload lifecycle, the queue state machine, the analysis worker, the storage seam - are implemented
+and covered by `pnpm test:api`;
 [upload-flow.md](docs/upload-flow.md), [queue-state-machine.md](docs/queue-state-machine.md),
 [analysis-worker.md](docs/analysis-worker.md) and [schema.md](docs/schema.md) are the
 contracts they keep.
@@ -41,7 +41,7 @@ above leaves open.
 - [ ] `MYBAND_ENV=production` (this is what switches the interactive docs off), `MYBAND_LOG_LEVEL=info`
 - [ ] `MYBAND_CORS_ORIGINS` names the deployed web origin and nothing else - not a wildcard
 - [ ] `MYBAND_METRICS_TOKEN` is set, and `/admin/metrics` answers counts with it and `401` without
-- [ ] `MYBAND_PIPELINE_VERSION` matches what the deployed worker writes - `0.2.0` since the chord timeline (bump it when the worker's output shape changes)
+- [ ] `MYBAND_PIPELINE_VERSION` matches what the deployed worker writes - `0.4.0` since song sections (bump it when the worker's output shape changes)
 - [ ] `apps/web`: `NEXT_PUBLIC_API_BASE_URL` and `API_BASE_URL` both point at the API; the Supabase URL and publishable key are the project's
 
 **Storage**
@@ -121,8 +121,10 @@ Known, decided, and not being fixed in this sprint:
   ([queue-state-machine.md](docs/queue-state-machine.md), "Deliberately absent").
 - **No retry route.** A song that failed can only be re-uploaded, which creates a new song;
   nothing re-enqueues an existing one (R3).
-- **Song sections.** The next analysis stage, and the milestone before beta. Chords left this
-  list with the chords release: the stage, the `chords` artifact and the song page's timeline.
+- **Sections are labelled, not named.** The stage ships - the `sections` artifact, its route and
+  the song page's form strip - but a section is a letter (`A B A B C`), not a verse or a chorus,
+  because naming one takes the lyrics. Chords left this list with the chords release: the stage,
+  the `chords` artifact and the song page's timeline.
 - **No GPU dispatcher.** A worker is a process someone runs; the RunPod path is not wired into
   the queue ([upload-flow.md](docs/upload-flow.md), "Deliberately not here yet"), and production
   therefore requires no RunPod credentials: `Settings._require_production_secrets` demands only

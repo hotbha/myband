@@ -377,13 +377,14 @@ column.
 
 ## 6. Screen 4 - Song analysis (`/songs/[id]`)
 
-Three bands, top to bottom, and every one of them spans the full workspace width. This is the screen
+Four bands, top to bottom, and every one of them spans the full workspace width. This is the screen
 the container was widened for.
 
 | Band       | Contents                                                                                                       | Why it is this wide                                                                                                                |
 | ---------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | **Top**    | Song identity, then six measurements across the width                                                          | Six tiles in a row, not two rows of three - a row of measurements is read left to right, and a wrapped grid makes the eye zig-zag. |
 | **Middle** | The chord timeline: a proportional lane, the toggle, the ranked progression, then the full list in two columns | The lane is a _time_ axis. Time is the one thing that gets better with width.                                                      |
+| **Middle** | Song sections: the same lane at the scale of a section, the form, then every section in order                  | The same time axis again, one scale up - and the form is a claim about the whole recording, so it needs the whole width to be read. |
 | **Bottom** | Exports, and how the analysis was made                                                                         | Two reference panels, read once, at the end.                                                                                       |
 
 ### Desktop (>= 1024px)
@@ -653,6 +654,7 @@ Which file draws what, so that a change lands in one place.
 | Upload zone (5 states)   | `features/uploads/components/upload-dropzone.tsx`          | Client |
 | Chord lane (decorative)  | `features/uploads/components/chord-lane.tsx`               | Server |
 | Chord list + toggle      | `features/uploads/components/chord-timeline.tsx`           | Client |
+| Section map + form       | `features/uploads/components/section-map.tsx`               | Server |
 | Polling while in flight  | `features/uploads/components/library-refresh.tsx`          | Client |
 | Auth forms               | `features/auth/components/*`                               | Client |
 

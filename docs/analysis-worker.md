@@ -30,7 +30,8 @@ txn 1   claim_next (FOR UPDATE SKIP LOCKED) -> begin: queued -> running, attempt
         started_at, heartbeat_at                                        COMMIT
         ── the row lock is released here, which is what makes a live heartbeat meaningful
 work    download (GET) -> duration (file header) -> tempo -> key
-        -> chords (whole song, chroma) -> MIDI (bounded window) -> PUT artifacts
+        -> chords (whole song, chroma) -> sections (whole song, pooled chroma)
+        -> MIDI (bounded window) -> PUT artifacts
         a heartbeat thread commits heartbeat_at on its own connection every 15s
 txn 2   complete: job -> succeeded + analysis_results + songs.latest_job_id
         + songs.duration_ms / bpm / musical_key                         COMMIT
@@ -51,26 +52,38 @@ while it is being worked on, which is what the UI polls for.
 | tempo         | `analysis.detect_tempo`                | `librosa.beat.beat_track`                                       |
 | key           | `analysis.detect_key`                  | Krumhansl-Schmuckler over `chroma_cqt`, 24 keys correlated      |
 | chords        | `chords.detect_chords`                 | chroma CQT -> templates -> Viterbi, over the whole song         |
+| sections      | `sections.detect_sections`             | chroma pooled into 4 s blocks -> k-means -> Viterbi             |
 | MIDI          | `midi.transcribe_with_pyin`            | a monophonic sketch of a bounded window (see below)             |
-| store         | `artifacts.store_midi`, `store_chords` | `users/<uid>/analysis/<job id>/{transcription.mid,chords.json}` |
+| store         | `artifacts.store_midi`, `store_chords`, `store_sections` | `users/<uid>/analysis/<job id>/{transcription.mid,chords.json,sections.json}` |
 | finish        | `queue.complete`, `song.set_analysis`  | one transaction, or nothing                                     |
 
 Duration, BPM and key are **columns on `songs`** (migration 04) rather than artifacts: the
 library list reads them per row, and reading them out of `analysis_results` would be a join
-plus a jsonb extraction per song. The two payloads are artifacts, and their keys satisfy
+plus a jsonb extraction per song. The three payloads are artifacts, and their keys satisfy
 `analysis_results_object_key_check` by construction. A payload's key is also what the browser ends
 up reading: `GET /songs/{id}/midi` signs a short-lived GET for the `midi` row's `object_key` so the
-object the worker wrote is the object the user downloads, and `GET /songs/{id}/chords` reads the
-`chords` row's object directly and answers with the timeline (docs/upload-flow.md).
+object the worker wrote is the object the user downloads, and `GET /songs/{id}/chords` and
+`GET /songs/{id}/sections` read their rows' objects directly and answer with the timeline and the
+list (docs/upload-flow.md).
 
 **Chords are read from the audio, not from the MIDI.** The only symbolic artifact this process
-produces is a monophonic 30-second sketch whose notes are 69% in C2-C3 - it follows the bass - so it
-cannot carry harmony, and harmony is a fact about notes sounding _together_. The pipeline is
+produces is a monophonic sketch of a bounded window (up to two minutes) whose notes are 69% in C2-C3
+and follow the bass - so it cannot carry harmony, and harmony is a fact about notes sounding
+_together_. The pipeline is
 therefore `analysis.py` (measure) -> `chroma.py` (fold the spectrum into twelve pitch classes per
 frame, over the whole song) -> `chords.py` (score every frame against every chord in
 `chord_templates.py`, then decode the most likely _sequence_ of labels with a Viterbi pass and an
 explicit no-chord state). `segments.py` is the shared machinery underneath - scores to a path, a
-path to spans - because section detection will want exactly the same steps.
+path to spans - and it is shared literally: section detection decodes exactly the same way.
+
+**Sections are read from the same chroma, one scale up.** `sections.py` pools those frames into 4 s
+blocks (two bars at a walking tempo), sorts the blocks into six groups with k-means, and hands the
+result to the same `segments.py` Viterbi that the chords use - so a section is a stretch where the
+harmony stays put, and two sections that are the same music are the same group. Each group is then
+named after the first place it appears: `A B A B C`. It is a **letter and not a name** on purpose.
+A chorus is the part with the hook, a hook is words and a melody, and this detector reads neither -
+so calling a cluster "verse" would be a guess dressed as a fact. The digest of the artifact is that
+form, which is what makes a library row readable on its own.
 
 Two decisions inside that are worth knowing before reading the code:
 
@@ -80,14 +93,15 @@ Two decisions inside that are worth knowing before reading the code:
   `Am7` as `Am`, `Gsus4` as `G` - because a speculative seventh is a worse answer than a certain
   triad. The wide grammar is kept in storage so a later fretboard or section feature never has to
   rewrite a timeline that was already written.
-- **No beat or bar snapping in v1.** Segments are frame-accurate (a ~93 ms hop). Snapping would put
-  a confidently wrong downbeat on every segment instead of a slightly ragged right one, and the grid
-  a section detector would want is the one `analysis.detect_tempo` already computes.
+- **No beat or bar snapping in v1.** Segments are frame-accurate (a ~93 ms hop), and sections land on
+  their own 4 s pool rather than on a bar. Snapping either would put a confidently wrong downbeat on
+  every boundary instead of a slightly ragged right one. The grid snapping would want is the one
+  `analysis.detect_tempo` already computes, and it is there when something needs it.
 
 Where the code lives: `app/workers/` - `runner.py` (the loop), `pipeline.py` (one job's
 lifecycle), `stages.py` (the work, its retries and its budget), `analysis.py`, `chroma.py`,
-`chords.py`, `chord_templates.py`, `chord_summary.py`, `segments.py`, `midi.py`, `artifacts.py`,
-`heartbeat.py`, `errors.py`, `tuning.py`.
+`chords.py`, `chord_templates.py`, `chord_summary.py`, `sections.py`, `section_summary.py`,
+`segments.py`, `midi.py`, `artifacts.py`, `heartbeat.py`, `errors.py`, `tuning.py`.
 
 ## Measured cost
 
@@ -100,6 +114,7 @@ tracker, not the detectors, is what a job's budget is spent on:
 | decode                               | ~0.1 s                    | whole file, mono, 22.05 kHz                                                        |
 | tempo + key                          | ~0.5 s                    | the full recording                                                                 |
 | chords (whole song)                  | ~5 ms per second of audio | `chroma_cqt` + a 121-state Viterbi; ~2 s of numba compile is a one-off             |
+| sections (whole song)                | under a second            | the same chroma, 4 s pools and a 6-state Viterbi over a fraction of the frames      |
 | pYIN (hop 512, single cold 4 s clip) | **14.7 s**                | ~3.7x realtime - the reason for the window                                         |
 | pYIN (11 kHz, hop 1024, warm)        | ~0.1 s per second         | measured on three real recordings; what `MYBAND_WORKER_MIDI_WINDOW_SECONDS` bounds |
 
@@ -189,11 +204,11 @@ end-to-end test found this the hard way with the MIDI; the fix is in
 [upload-flow.md](upload-flow.md), and the failure now surfaces as `storage_rejected` on the job
 instead of as three rounds of `storage_unavailable`.
 
-There are two artifact types per job, so the bucket needs two entries beyond the browser's:
+There are three artifact types per job, so the bucket needs three entries beyond the browser's:
 `audio/midi` (the transcription, written by `store_midi`) and `application/json` (the chord
-timeline, written by `store_chords`). The refusal names neither: it arrives as a
-`storage_rejected` on whichever `store_*` stage the policy does not allow, so a new artifact
-kind is a bucket change as well as a code change.
+timeline and the section list, written by `store_chords` and `store_sections`). The refusal names
+none of them: it arrives as a `storage_rejected` on whichever `store_*` stage the policy does not
+allow, so a new artifact kind is a bucket change as well as a code change.
 
 ## Known limitations
 
@@ -244,8 +259,10 @@ uv run --directory apps/api --group worker pytest
 | `test_worker_heartbeat.py`         | a database                           | the thread, and what it does when the job is gone             |
 | `test_worker_analysis.py`          | the audio group                      | 120 BPM click, A minor and C major, silence refused           |
 | `test_worker_chords.py`            | the audio group                      | the four triads of a loop, an inversion, silence, the grammar |
+| `test_worker_sections.py`          | the audio group                      | a 48 s A-B-A fixture, a section holding four chords, silence  |
 | `test_worker_midi.py`              | the audio group                      | a real SMF, the triad that was played, the window             |
 | `test_song_chords.py`              | a database                           | the timeline, its digest, and every refusal                   |
+| `test_song_sections.py`            | a database                           | the list, its form, and every refusal                         |
 | `test_worker_e2e.py`               | a database, a bucket, `MYBAND_E2E=1` | the whole path: presigned PUT to rows                         |
 
 The audio suites skip themselves when the `worker` group is not installed and the database

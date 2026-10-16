@@ -6,7 +6,8 @@ The order of what happens to a job, and the two places it is written:
    ``running`` in the same transaction (:func:`queue.begin`). The attempt is counted and
    the first heartbeat stamped before any slow work starts.
 2. **work** - :class:`app.workers.stages.Stages` fetches the recording, measures it, reads its
-   chords, transcribes it and stores the results, with its own retries and budget.
+   chords and its sections, transcribes it and stores the results, with its own retries and
+   budget.
 3. **finish** - one transaction writes the artifacts, the job row, ``songs.latest_job_id``
    and the song's ``bpm`` / ``musical_key``. Or one transaction fails the job with a
    reason and a finish time.
@@ -63,7 +64,7 @@ from app.workers.tuning import WorkerTuning
 
 if TYPE_CHECKING:
     # Typing only, so the pipeline stays importable without the audio stack installed.
-    from app.workers.stages import Analyzer, ChordDetector, Transcriber
+    from app.workers.stages import Analyzer, ChordDetector, SectionDetector, Transcriber
 
 log = logging.getLogger("myband.worker.pipeline")
 
@@ -89,8 +90,9 @@ class Pipeline:
     """Claims queued jobs and runs them through the stages, one at a time.
 
     Every dependency is injected, and the audio ones are why this class can be tested without a
-    bucket, a database or the audio stack: ``analyze``, ``detect_chords`` and ``transcribe`` are
-    the only places audio is touched, and ``connect`` is the only place a transaction is.
+    bucket, a database or the audio stack: ``analyze``, ``detect_chords``, ``detect_sections``
+    and ``transcribe`` are the only places audio is touched, and ``connect`` is the only place a
+    transaction is.
     """
 
     def __init__(
@@ -99,6 +101,7 @@ class Pipeline:
         store: ObjectStore,
         analyze: Analyzer,
         detect_chords: ChordDetector,
+        detect_sections: SectionDetector,
         transcribe: Transcriber,
         connect: ConnectionFactory = db.connect,
         heartbeat_factory: Callable[..., Heartbeat] = Heartbeat,
@@ -114,6 +117,7 @@ class Pipeline:
             store=store,
             analyze=analyze,
             detect_chords=detect_chords,
+            detect_sections=detect_sections,
             transcribe=transcribe,
             tuning=self._tuning,
             sleep=sleep,
@@ -202,6 +206,7 @@ class Pipeline:
             analysis=produced.analysis,
             midi=produced.midi,
             chords=produced.chords,
+            sections=produced.sections,
         )
 
         with self._connect() as conn:
@@ -231,6 +236,7 @@ class Pipeline:
                 musical_key=produced.analysis.musical_key,
                 notes=produced.midi.note_count,
                 chords=produced.chords.segment_count,
+                sections=produced.sections.section_count,
                 beats=beats,
             ),
         )

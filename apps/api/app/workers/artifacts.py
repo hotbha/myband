@@ -1,12 +1,13 @@
 """What a finished analysis leaves behind: rows, and objects in the bucket.
 
 A job produces two kinds of thing. The small digests - tempo, key, how many notes the
-transcription found, the song's chord progression - live inline in ``analysis_results.summary``.
-The two payloads far too big for that column - the MIDI file and the chord timeline - go to the
-bucket, each referenced by its own ``object_key``. This module is the only place either shape is
-decided, so "what a result looks like" is one file to read.
+transcription found, the song's chord progression, its form - live inline in
+``analysis_results.summary``. The payloads far too big for that column - the MIDI file, the
+chord timeline and the section list - go to the bucket, each referenced by its own
+``object_key``. This module is the only place either shape is decided, so "what a result looks
+like" is one file to read.
 
-Both keys are derived, never invented: ``users/<user id>/analysis/<job id>/<filename>``. That
+Every key is derived, never invented: ``users/<user id>/analysis/<job id>/<filename>``. That
 satisfies ``analysis_results_object_key_check`` - asserted in the tests, because a key the
 database would refuse is a bug that only ever shows up on the happy path - it stays inside the
 owner's own prefix, and it is stable for a job, which is what makes writing it a second time an
@@ -22,7 +23,7 @@ from uuid import UUID
 
 from app.models.analysis_result import ResultInput
 from app.services.storage import ObjectStore
-from app.workers import chord_summary
+from app.workers import chord_summary, section_summary
 
 if TYPE_CHECKING:
     # Typing only: importing the audio stack here would make this module (and the
@@ -30,18 +31,24 @@ if TYPE_CHECKING:
     from app.workers.analysis import AudioAnalysis
     from app.workers.chords import ChordTimeline
     from app.workers.midi import Transcription
+    from app.workers.sections import SectionTimeline
 
 # What each artifact is stored as, mirrored by `analysis_results.object_content_type`.
 MIDI_CONTENT_TYPE = "audio/midi"
 # JSON, and not the newline-delimited form the seed's fixture imagines: the only reader is
 # `ObjectStore.download`, which hands back whole bytes and cannot stream a line at a time.
 CHORDS_CONTENT_TYPE = "application/json"
+# The same type, spelled again rather than shared: two artifacts that happen to be encoded
+# the same way are still two decisions, and a future section format should not have to
+# rewrite the chord timeline's content type to change its own.
+SECTIONS_CONTENT_TYPE = "application/json"
 
 # The directory segment between the owner and the job, so a user's uploads and the
 # things derived from them are distinguishable in a listing.
 ANALYSIS_PREFIX = "analysis"
 TRANSCRIPTION_FILENAME = "transcription.mid"
 CHORDS_FILENAME = "chords.json"
+SECTIONS_FILENAME = "sections.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +87,25 @@ class StoredChords:
     progression: tuple[str, ...]
     confidence: float
     no_chord_ratio: float
+
+
+@dataclass(frozen=True, slots=True)
+class StoredSections:
+    """Where the section list went, and the digest of what is inside it.
+
+    ``form`` is the digest's headline - ``A B A B C`` - and it is a string rather than the
+    letters it is built from, because the letters in order *are* the form: a library row
+    showing the shape of a song wants the sequence, not a vocabulary to reassemble it from.
+    """
+
+    object_key: str
+    object_bytes: int
+    content_type: str
+    detector: str
+    vocabulary: str
+    section_count: int
+    form: str
+    confidence: float
 
 
 def midi_object_key(*, user_id: UUID, job_id: UUID) -> str:
@@ -183,21 +209,87 @@ def store_chords(
     )
 
 
+def sections_object_key(*, user_id: UUID, job_id: UUID) -> str:
+    """``users/<user id>/analysis/<job id>/sections.json`` (see :func:`midi_object_key`)."""
+    return f"users/{user_id}/{ANALYSIS_PREFIX}/{job_id}/{SECTIONS_FILENAME}"
+
+
+def encode_sections(timeline: SectionTimeline) -> bytes:
+    """The section list as the JSON object the bucket holds and the API serves back.
+
+    One array of sections, the same shape the chord timeline is stored in - and deliberately
+    the same *reader's* shape: a section is a start, an end, a label and a confidence, which
+    is what the timeline's own segments are. The two artifacts differ in what the label
+    means, not in how one is read.
+    """
+    payload = {
+        "detector": timeline.name,
+        "vocabulary": timeline.vocabulary,
+        "hop_ms": timeline.hop_ms,
+        "sections": [
+            {
+                "start_ms": section.start_ms,
+                "end_ms": section.end_ms,
+                "label": section.label,
+                "confidence": section.confidence,
+            }
+            for section in timeline.sections
+        ],
+    }
+    return json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+
+def store_sections(
+    store: ObjectStore,
+    *,
+    user_id: UUID,
+    job_id: UUID,
+    timeline: SectionTimeline,
+) -> StoredSections:
+    """Put the section list in the bucket, and describe where it landed.
+
+    The digest is measured from the timeline's own sections here rather than accepted beside
+    it, for the same reason the chord digest is: a row can never describe a different list
+    from the one that was actually written.
+    """
+    key = sections_object_key(user_id=user_id, job_id=job_id)
+    info = store.put_bytes(
+        object_key=key,
+        body=encode_sections(timeline),
+        content_type=SECTIONS_CONTENT_TYPE,
+    )
+
+    return StoredSections(
+        object_key=key,
+        object_bytes=info.bytes,
+        content_type=SECTIONS_CONTENT_TYPE,
+        detector=timeline.name,
+        vocabulary=timeline.vocabulary,
+        section_count=section_summary.section_count(timeline.sections),
+        form=section_summary.form(timeline.sections),
+        confidence=section_summary.confidence(timeline.sections),
+    )
+
+
 def build_results(
     *,
     analysis: AudioAnalysis,
     midi: StoredMidi,
     chords: StoredChords,
+    sections: StoredSections,
 ) -> list[ResultInput]:
     """The rows a succeeded job writes: one per artifact kind it produced.
 
     Duration is deliberately absent: it is a column on ``songs`` rather than an artifact, and
-    storing the same number in two places is how they drift. Sections are not produced yet, and a
-    row claiming an empty one would be a lie the UI has to learn to ignore.
+    storing the same number in two places is how they drift.
 
     ``key`` is repeated in the chords digest on purpose. The row is read on its own - the library
     shows a progression without fetching the song - and a digest that needed a join to be
     interpretable would not be a digest.
+
+    The sections row is the same argument one artifact further on, and its ``form`` is the
+    version of it that matters: ``A B A B C`` in a library row says how a song is built
+    without fetching the list it was read from.
     """
     return [
         ResultInput(
@@ -222,6 +314,19 @@ def build_results(
             object_key=chords.object_key,
             object_bytes=chords.object_bytes,
             object_content_type=chords.content_type,
+        ),
+        ResultInput(
+            kind="sections",
+            summary={
+                "detector": sections.detector,
+                "vocabulary": sections.vocabulary,
+                "sections": sections.section_count,
+                "form": sections.form,
+                "confidence": sections.confidence,
+            },
+            object_key=sections.object_key,
+            object_bytes=sections.object_bytes,
+            object_content_type=sections.content_type,
         ),
         ResultInput(
             kind="midi",

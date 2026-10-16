@@ -1,14 +1,14 @@
 """The shapes one analysis leaves behind: no bucket, no database, no audio.
 
-What is asserted here is the vocabulary a stored result uses - which kinds exist, where the two
+What is asserted here is the vocabulary a stored result uses - which kinds exist, where the three
 payloads go, what the inline digests say - because that vocabulary is a contract with the UI and
-with every stored row. Both object keys are checked against a copy of
+with every stored row. All three object keys are checked against a copy of
 ``analysis_results_object_key_check`` on purpose: the migration is the authority, and this is the
 test that fails when the code and the CHECK drift apart.
 
 The audio stack is deliberately absent - nothing here imports librosa - which is exactly why the
-chord digest is derived by ``workers.chord_summary`` from plain segments rather than read off the
-detector's own type.
+chord and section digests are derived by ``workers.chord_summary`` and
+``workers.section_summary`` from plain segments rather than read off the detectors' own types.
 """
 
 import json
@@ -17,7 +17,13 @@ import re
 from app.core.ids import new_id
 from app.models.analysis_result import MAX_SUMMARY_BYTES, ResultInput
 from app.workers import artifacts
-from tests.fakes import FakeAnalysis, FakeChordTimeline, FakeObjectStore, FakeTranscription
+from tests.fakes import (
+    FakeAnalysis,
+    FakeChordTimeline,
+    FakeObjectStore,
+    FakeSectionTimeline,
+    FakeTranscription,
+)
 
 OBJECT_KEY_PATTERN = re.compile(r"^users/[0-9a-fA-F-]{36}/[A-Za-z0-9._/-]+$")
 
@@ -46,6 +52,17 @@ def test_the_chords_key_is_the_midi_key_under_another_filename() -> None:
     assert len(key) <= 512
 
 
+def test_the_sections_key_is_the_midi_key_under_another_filename() -> None:
+    """The third payload hangs off the same job prefix, so one job's output is one listing."""
+    user_id, job_id = new_id(), new_id()
+
+    key = artifacts.sections_object_key(user_id=user_id, job_id=job_id)
+
+    assert key == f"users/{user_id}/analysis/{job_id}/sections.json"
+    assert OBJECT_KEY_PATTERN.fullmatch(key) is not None
+    assert len(key) <= 512
+
+
 def test_the_keys_are_stable_for_one_job_and_different_between_jobs() -> None:
     """Idempotency starts here: a second run writes over the first run's objects."""
     user_id, job_id = new_id(), new_id()
@@ -59,6 +76,12 @@ def test_the_keys_are_stable_for_one_job_and_different_between_jobs() -> None:
     assert artifacts.chords_object_key(
         user_id=user_id, job_id=job_id
     ) == artifacts.chords_object_key(user_id=user_id, job_id=job_id)
+    assert artifacts.sections_object_key(
+        user_id=user_id, job_id=job_id
+    ) == artifacts.sections_object_key(user_id=user_id, job_id=job_id)
+    assert artifacts.sections_object_key(
+        user_id=user_id, job_id=job_id
+    ) != artifacts.sections_object_key(user_id=user_id, job_id=new_id())
 
 
 def test_storing_the_midi_reports_what_the_bucket_holds() -> None:
@@ -104,22 +127,49 @@ def test_storing_the_chords_writes_the_timeline_and_digests_it() -> None:
     assert payload["segments"][0]["chord"] == "Am"
 
 
+def test_storing_the_sections_writes_the_list_and_digests_it() -> None:
+    """The digest is the form: the row holds the *shape*, not a copy of the list it came from."""
+    store = FakeObjectStore()
+    timeline = FakeSectionTimeline()
+
+    stored = artifacts.store_sections(store, user_id=new_id(), job_id=new_id(), timeline=timeline)
+
+    assert stored.content_type == "application/json"
+    assert stored.object_bytes == len(artifacts.encode_sections(timeline))
+    assert stored.detector == timeline.name
+    assert stored.vocabulary == timeline.vocabulary
+    assert stored.section_count == 3
+    assert stored.form == "A B A"
+    assert stored.confidence == 0.8  # the mean of 0.9, 0.7 and 0.8
+
+    payload = json.loads(store.download(object_key=stored.object_key))
+    assert payload["detector"] == timeline.name
+    assert payload["vocabulary"] == timeline.vocabulary
+    assert payload["hop_ms"] == timeline.hop_ms
+    # The list itself, which is what the digest is a reading of: every section, in order.
+    assert payload["sections"] == [
+        {"start_ms": 0, "end_ms": 3000, "label": "A", "confidence": 0.9},
+        {"start_ms": 3000, "end_ms": 6000, "label": "B", "confidence": 0.7},
+        {"start_ms": 6000, "end_ms": 8000, "label": "A", "confidence": 0.8},
+    ]
+
+
 # --- The rows ----------------------------------------------------------------
 
 
-def test_a_job_produces_bpm_key_chords_and_midi() -> None:
-    """One row per artifact kind. Sections are not produced yet, and are not pretended into
-    being."""
+def test_a_job_produces_bpm_key_chords_sections_and_midi() -> None:
+    """One row per artifact kind, in the order the stages produced them."""
     results = _results()
 
-    assert [result.kind for result in results] == ["bpm", "key", "chords", "midi"]
+    assert [result.kind for result in results] == ["bpm", "key", "chords", "sections", "midi"]
 
 
 def test_every_inline_digest_fits_the_column() -> None:
     """``analysis_results_payload_bytes_check`` caps the digest at 8192 bytes.
 
     The chords digest is the one worth measuring: a progression and a handful of numbers, which have
-    to stay a digest rather than growing with the length of the song.
+    to stay a digest rather than growing with the length of the song. The sections digest is the
+    case that makes the point: a form, whatever the song's section count, is one short string.
     """
     for result in _results():
         assert result.payload_bytes <= MAX_SUMMARY_BYTES
@@ -131,7 +181,7 @@ def test_only_the_payload_rows_carry_an_object() -> None:
     user_id, job_id = new_id(), new_id()
     store = FakeObjectStore()
 
-    bpm, key, chords, midi = artifacts.build_results(
+    bpm, key, chords, sections, midi = artifacts.build_results(
         analysis=FakeAnalysis(),
         midi=artifacts.store_midi(
             store,
@@ -145,6 +195,12 @@ def test_only_the_payload_rows_carry_an_object() -> None:
             job_id=job_id,
             timeline=FakeChordTimeline(),
         ),
+        sections=artifacts.store_sections(
+            store,
+            user_id=user_id,
+            job_id=job_id,
+            timeline=FakeSectionTimeline(),
+        ),
     )
 
     assert (bpm.object_key, bpm.object_bytes) == (None, None)
@@ -153,6 +209,10 @@ def test_only_the_payload_rows_carry_an_object() -> None:
     assert chords.object_key == artifacts.chords_object_key(user_id=user_id, job_id=job_id)
     assert chords.object_bytes == len(artifacts.encode_chords(FakeChordTimeline()))
     assert chords.object_content_type == "application/json"
+
+    assert sections.object_key == artifacts.sections_object_key(user_id=user_id, job_id=job_id)
+    assert sections.object_bytes == len(artifacts.encode_sections(FakeSectionTimeline()))
+    assert sections.object_content_type == "application/json"
 
     assert midi.object_key == artifacts.midi_object_key(user_id=user_id, job_id=job_id)
     assert midi.object_bytes == len(FakeTranscription().data)
@@ -177,5 +237,11 @@ def _results() -> list[ResultInput]:
             user_id=user_id,
             job_id=job_id,
             timeline=FakeChordTimeline(),
+        ),
+        sections=artifacts.store_sections(
+            store,
+            user_id=user_id,
+            job_id=job_id,
+            timeline=FakeSectionTimeline(),
         ),
     )

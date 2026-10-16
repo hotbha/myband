@@ -1,4 +1,4 @@
-"""Song routes: the library, one song's current analysis, its MIDI, and its chords."""
+"""Song routes: the library, one song's analysis, its MIDI, its chords, and its sections."""
 
 import json
 from datetime import UTC, datetime, timedelta
@@ -15,9 +15,11 @@ from app.models import song as song_model
 from app.schemas.song import (
     ChordsOut,
     MidiDownloadOut,
+    SectionsOut,
     SongListOut,
     SongWithJob,
     chords_view,
+    sections_view,
     song_view,
 )
 from app.services import upload_rules, uploads
@@ -37,6 +39,9 @@ MIDI_KIND = "midi"
 
 # The artifact a chord view is a view of.
 CHORDS_KIND = "chords"
+
+# The artifact a section view is a view of.
+SECTIONS_KIND = "sections"
 
 # What the file is called when the song's title leaves nothing usable, and what the
 # extension is either way. The fallback matches the object's own name in the bucket.
@@ -214,3 +219,59 @@ def get_song_chords(
         )
 
     return chords_view(json.loads(payload), summary)
+
+
+@router.get("/songs/{song_id}/sections")
+def get_song_sections(
+    song_id: UUID,
+    user_id: CurrentUserId,
+    store: StorageDep,
+) -> SectionsOut:
+    """The song's sections, or a 404 that says why.
+
+    The same route the chord timeline has, over the artifact next to it, and it refuses in the
+    same three ways with the same code: ``analysis_not_ready`` for a song nothing has analysed,
+    for one whose analysis produced no sections, and for one whose list is no longer in the
+    bucket. The messages differ so a reader can tell those three apart; the screen reports the
+    job's own status either way.
+
+    Sections cover a whole recording by construction, so there is no coverage to report here -
+    the interesting number is the form, and that is in the digest the worker wrote.
+    """
+    with connect() as conn:
+        song = song_model.get(conn, song_id)
+        if song is None or song.user_id != user_id or song.deleted_at is not None:
+            raise ApiProblem(HTTPStatus.NOT_FOUND, ErrorCode.SONG_NOT_FOUND, "No such song.")
+
+        if song.latest_job_id is None:
+            raise ApiProblem(
+                HTTPStatus.NOT_FOUND,
+                ErrorCode.ANALYSIS_NOT_READY,
+                "This song has not been analysed yet.",
+            )
+
+        artifact = analysis_result.get_for_job_kind(
+            conn,
+            job_id=song.latest_job_id,
+            kind=SECTIONS_KIND,
+        )
+        if artifact is None or artifact.object_key is None:
+            raise ApiProblem(
+                HTTPStatus.NOT_FOUND,
+                ErrorCode.ANALYSIS_NOT_READY,
+                "This song's analysis produced no sections.",
+            )
+
+        object_key = artifact.object_key
+        summary = artifact.summary
+
+    payload = store.download(object_key=object_key)
+    if payload is None:
+        # The same hole the chord route answers for: a row whose object is gone.
+        raise ApiProblem(
+            HTTPStatus.NOT_FOUND,
+            ErrorCode.ANALYSIS_NOT_READY,
+            "This song's sections are no longer in storage.",
+        )
+
+    return sections_view(json.loads(payload), summary)

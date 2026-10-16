@@ -8,9 +8,10 @@
  *
  * Two rules hold everywhere in this file:
  *
- * 1. **Nothing is claimed that the product does not do today.** Song sections, the AI
- *    guitarist, the AI drummer and band generation appear once, in `ROADMAP`, under a
- *    heading that says they are not available.
+ * 1. **Nothing is claimed that the product does not do today.** The AI guitarist, the AI
+ *    drummer and band generation appear once, in `ROADMAP`, under a heading that says they
+ *    are not available. Song sections left that list with the sections release: the worker
+ *    produces them and the song page draws the form.
  * 2. **Every number is one the pipeline measured.** The figures in the feature cards
  *    and the answers are taken from `demo-analysis.ts` and from the modules that
  *    produced them, so a tester who checks will find them.
@@ -22,7 +23,6 @@ import {
   FileMusic,
   GraduationCap,
   Guitar,
-  Layers,
   ListMusic,
   Mic,
   Music,
@@ -192,11 +192,6 @@ export type RoadmapItem = {
  */
 export const ROADMAP: RoadmapItem[] = [
   {
-    icon: Layers,
-    title: "Song Sections",
-    description: "Verse, chorus, bridge - timed, so a wall of chords becomes a map.",
-  },
-  {
     icon: Guitar,
     title: "AI Guitarist",
     description: "Guitar parts played from the analysis, in the feel of the original.",
@@ -255,11 +250,11 @@ export const FAQS: Faq[] = [
   {
     question: "What can the MIDI actually do?",
     answer:
-      "It is a monophonic sketch of the melody from the first 30 seconds, transcribed with pYIN. One line: no bass, no drums, no harmony, and it is not a multitrack transcription. Enough to arrange from, not enough to release.",
+      "It is a monophonic sketch of the melody from the song's opening, transcribed with pYIN. It covers up to the first 120 seconds, clamped to the recording - so a song shorter than two minutes is transcribed whole, and a longer one stops there. One line: no bass, no drums, no harmony, and it is not a multitrack transcription. Enough to arrange from, not enough to release.",
   },
   {
-    question: "Where are song sections and the AI band?",
+    question: "What do the song sections tell me?",
     answer:
-      "Not shipped. Song sections, the AI guitarist, the AI drummer and band performance generation are on the roadmap and labelled as planned wherever they appear - nothing on this page claims they work today.",
+      "Which stretches of the track are the same music, and in what order - the song's form, written as letters like A B A B C. The detector compares four seconds at a time, so a section can hold several chords and a repeat shows up as a repeat. It does not call one of them a chorus: that takes the lyrics, and a wrong chorus is worse than an honest letter. The AI guitarist, the AI drummer and band performance generation are still on the roadmap and labelled as planned wherever they appear.",
   },
 ];

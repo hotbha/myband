@@ -82,6 +82,7 @@ exists.
 | GET    | `/songs`            | `?limit=`                                             | `200 {songs: [{...song, job}]}`                        |
 | GET    | `/songs/{id}/midi`  | -                                                     | `200 {url, expires_at}`                                |
 | GET    | `/songs/{id}/chords`| -                                                     | `200 {detector, vocabulary, key, hop_ms, summary, segments}` |
+| GET    | `/songs/{id}/sections`| -                                                   | `200 {detector, vocabulary, hop_ms, summary, sections}` |
 | GET    | `/jobs/{id}`        | -                                                     | `200 {job}`                                            |
 | GET    | `/health`           | -                                                     | `200 {status}`                                         |
 
@@ -147,10 +148,10 @@ What each step is for:
    from "produced no MIDI file", and nothing else does. The screen already shows the
    job's status, and there is nothing to download either way.
 
-## Reading the chords back
+## Reading the chords and the sections back
 
 Same route shape, one deliberate difference: the API reads the object and answers with the
-timeline, because this is a screen's read rather than a file to save.
+timeline or the list, because this is a screen's read rather than a file to save.
 
 ```text
 Browser                FastAPI                   Postgres          Cloudflare R2
@@ -167,6 +168,11 @@ Browser                FastAPI                   Postgres          Cloudflare R2
    | 2  200 {detector, vocabulary, key, hop_ms, summary, segments}       |
    |<----------------------|                         |                  |
 ```
+
+`GET /songs/{id}/sections` is the same walk over the artifact next door: the same ownership check,
+the same `latest_job_id` lookup with `kind = 'sections'`, the same whole-object read, and the same
+three refusals under `analysis_not_ready`. The payload differs in what it holds - a list of labelled
+stretches rather than a timeline of chords - and not in how it is fetched.
 
 1. **One object, named by a row.** As with the MIDI, the key comes from the job's
    `chords` artifact rather than from the request, and the ownership check is the one
@@ -339,11 +345,12 @@ created without `audio/midi`: it is the one upload failure only the bucket can p
   (`app/services/queue.py`). Nothing reads RunPod today, so production is not asked
   for its credentials (`app/core/config.py`, `_require_production_secrets`); the
   commit that adds the dispatcher should put them back in that map.
-- **A download for anything but the MIDI.** `analysis_results` holds `bpm`, `key`
-  and `chords` rows, and only `chords` has a route of its own
-  (`GET /songs/{id}/chords`, read by the song page); tempo and key are read from
-  the `songs` row's headline columns. The signing is general - `presign_get` takes
-  any key - so each is a route and a schema away rather than a piece of machinery.
+- **A download for anything but the MIDI.** `analysis_results` holds `bpm`, `key`, `chords`,
+  `sections` and `midi` rows, and the two artifacts a screen reads have routes of their own
+  (`GET /songs/{id}/chords` and `GET /songs/{id}/sections`, both read by the song page); tempo
+  and key are read from the `songs` row's headline columns. The signing is general -
+  `presign_get` takes any key - so each is a route and a schema away rather than a piece of
+  machinery.
 - **Ranged or streamed reads.** A link fetches the whole object. Playing the
   recording in a `<audio>` element from the bucket would want a range-capable URL and
   an expiry sized for a listening session, not for the click that follows a response.

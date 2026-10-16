@@ -28,7 +28,7 @@ export function Roadmap() {
           lede="Nothing in this section works today. It is here so you can see where the product is going - and judge whether the part that exists now is worth your time."
         />
 
-        <div className="mt-12 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-12 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {ROADMAP.map((item, index) => (
             <Reveal key={item.title} delay={index * 0.06} className="h-full">
               <div className="h-full rounded-2xl border border-dashed border-white/[0.12] bg-white/[0.015] p-5">

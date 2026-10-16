@@ -162,11 +162,13 @@ def build_pipeline(*, settings: Settings | None = None) -> Pipeline:
     from app.workers.analysis import analyze
     from app.workers.chords import detect_chords
     from app.workers.midi import transcribe_with_pyin
+    from app.workers.sections import detect_sections
 
     return Pipeline(
         store=get_object_store(),
         analyze=analyze,
         detect_chords=detect_chords,
+        detect_sections=detect_sections,
         transcribe=transcribe_with_pyin,
         tuning=WorkerTuning.from_settings(settings),
     )

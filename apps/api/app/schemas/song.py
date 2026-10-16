@@ -78,12 +78,54 @@ class MidiDownloadOut(BaseModel):
     expires_at: datetime
 
 
+class SectionOut(BaseModel):
+    """One stretch of a song, and the label it shares with the stretches that repeat it.
+
+    Four fields, and three of them are the shape a *chord* segment arrives with - a start, an
+    end and how sure the detector was - so one renderer and one shared schema can serve both.
+
+    ``label`` is a letter rather than a name, and deliberately: ``A`` and ``B`` are the same
+    music heard twice and something else heard once, which is what a detector can measure.
+    Calling them verse and chorus would take lyrics, and a wrong chorus is worse than an
+    honest letter (``workers.sections``).
+    """
+
+    start_ms: int
+    end_ms: int
+    label: str
+    confidence: float
+
+
+class SectionsOut(BaseModel):
+    """A song's sections (``GET /songs/{id}/sections``).
+
+    The list itself rather than a link to it, for the reason the chord timeline is: a screen
+    reads this, so signing a URL would cost a second round trip and hand the browser a link
+    that expires while it is still displayed.
+
+    ``summary`` is the digest the worker wrote into ``analysis_results``, passed through
+    unchanged so that the row and the response can never describe different things. The form -
+    ``A B A B C`` - lives there rather than here, because it is the worker's statement about
+    the list it wrote and not this contract's reading of it.
+
+    ``hop_ms`` is the pool the detector compared, not the chroma frame: it is the grid the
+    boundaries actually land on, so a client that draws them is drawing the resolution the
+    detector really has.
+    """
+
+    detector: str
+    vocabulary: str
+    hop_ms: int
+    summary: dict[str, Any]
+    sections: list[SectionOut]
+
+
 class ChordSegmentOut(BaseModel):
     """One chord, held for a stretch of the song (``GET /songs/{id}/chords``).
 
-    Five fields, four of which are the shape a *section* will arrive with - a start, an end, a label
-    and how sure the detector was - so one renderer and one shared schema can serve both. ``chord``
-    is a label from the product's closed vocabulary, or ``"N"`` where nothing was played.
+    Five fields, three of which are the shape a *section* arrives with - a start, an end and how
+    sure the detector was - so one renderer and one shared schema can serve both. ``chord`` is a
+    label from the product's closed vocabulary, or ``"N"`` where nothing was played.
 
     ``label_simple`` is that same chord as its triad: ``workers.chord_summary.simplify_label``
     applied to ``chord``, derived per response rather than stored, because the object in the bucket
@@ -183,4 +225,24 @@ def chords_view(payload: dict[str, Any], summary: dict[str, Any]) -> ChordsOut:
         coverage=chord_summary.coverage(segments, _ranked(summary.get("progression"))),
         progression_simple=list(ranked_simple),
         coverage_simple=chord_summary.coverage(simple, ranked_simple),
+    )
+
+
+def sections_view(payload: dict[str, Any], summary: dict[str, Any]) -> SectionsOut:
+    """The API's view of a stored section list: what the worker wrote, plus its digest.
+
+    The stored object is the authority on the list and the row is the authority on the digest,
+    so this joins the two rather than recomputing either - the same rule the chord timeline
+    follows, and the reason there is no ``form`` here that could disagree with the one in the
+    row.
+
+    Nothing is derived for this response, unlike the chord timeline's simplified reading: a
+    section's label is already the plainest thing that can be said about it, so there is no
+    second spelling of a section to serve. The payload's own keys are splatted in, which means
+    a stored list missing a field this contract promises fails loudly here instead of reaching
+    a browser as ``undefined``.
+    """
+    return SectionsOut(
+        **{**payload, "sections": [SectionOut(**section) for section in payload["sections"]]},
+        summary=summary,
     )

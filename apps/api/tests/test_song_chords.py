@@ -34,6 +34,7 @@ from tests.fakes import (
     FakeChordSegment,
     FakeChordTimeline,
     FakeObjectStore,
+    FakeSectionTimeline,
     FakeTranscription,
 )
 from tests.support import claim_own_job, reuse_connection
@@ -54,6 +55,8 @@ TIMELINE = FakeChordTimeline(
     ),
     key="A minor",
 )
+
+SECTION_LIST = FakeSectionTimeline()
 
 # A timeline that takes more than one reading: a seventh, a sus and a slash bass, each played
 # beside its own triad, and a second of silence. Seven spellings the detector was sure of, and
@@ -102,6 +105,7 @@ def _analyse(
     with_chords: bool = True,
     with_object: bool = True,
     timeline: FakeChordTimeline = TIMELINE,
+    sections: FakeSectionTimeline = SECTION_LIST,
 ) -> UUID:
     """Take a song to a succeeded job the way the worker does, and return the job id.
 
@@ -110,6 +114,9 @@ def _analyse(
     which the route has to answer for rather than fail on.
     ``timeline`` is the detector's own output, for the tests that are about reading one back rather
     than about the job that wrote it.
+    ``sections`` is the other payload a job writes, and it is not optional: a real job writes all
+    of its artifacts or none, and the rows a real job leaves behind are what this suite asserts
+    against. Nothing here reads that row - it is the sections suite's subject, next door.
     """
     outcome = queue.enqueue(
         conn,
@@ -136,6 +143,12 @@ def _analyse(
             user_id=user_id,
             job_id=running.id,
             timeline=timeline,
+        ),
+        sections=artifacts.store_sections(
+            store,
+            user_id=user_id,
+            job_id=running.id,
+            timeline=sections,
         ),
     )
 

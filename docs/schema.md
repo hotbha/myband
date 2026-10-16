@@ -177,11 +177,11 @@ rejected.
 - `unique (job_id, kind)` makes writing idempotent: re-running a pipeline upserts
   instead of duplicating, which is why the API writes with
   `on conflict (job_id, kind) do update`.
-- Two kinds are served to a browser. `GET /songs/{id}/midi` reads the `midi` row and signs
+- Three kinds are served to a browser. `GET /songs/{id}/midi` reads the `midi` row and signs
   a short-lived GET for its `object_key` rather than handing out the key itself, and
-  `GET /songs/{id}/chords` reads the `chords` row's object and answers with the timeline
-  ([upload-flow.md](upload-flow.md)). `sections` has no route yet, and `bpm` and `key` never
-  need one - they are columns on `songs` for the library to read per row.
+  `GET /songs/{id}/chords` and `GET /songs/{id}/sections` read their rows' objects and answer
+  with the timeline or the list ([upload-flow.md](upload-flow.md)). `bpm` and `key` never need
+  a route - they are columns on `songs` for the library to read per row.
 - `user_id` is denormalised from the job **and** tied to it by a composite foreign
   key `(job_id, user_id) -> analysis_jobs(id, user_id)`. That is what makes the
   select policy a plain column comparison with no join, and simultaneously makes it

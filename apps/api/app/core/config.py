@@ -54,7 +54,10 @@ class Settings(BaseSettings):
     # 30 seconds of its recording at most, and a 0.3.0 row's up to 120 - so
     # `summary.window_seconds` is one number with two different meanings, and a
     # note count is only comparable to another of its own version.
-    pipeline_version: str = Field(default="0.3.0", validation_alias="MYBAND_PIPELINE_VERSION")
+    # 0.3.0 -> 0.4.0 for song sections: the worker now writes a `sections`
+    # artifact as well, so a 0.4.0 row's `summary` carries a `form` and a
+    # section count that a 0.3.0 row does not have.
+    pipeline_version: str = Field(default="0.4.0", validation_alias="MYBAND_PIPELINE_VERSION")
 
     # --- Database (Supabase PostgreSQL) ---
     # The API connects with the project's `postgres` role, which bypasses row

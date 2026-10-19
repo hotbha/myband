@@ -1,0 +1,16 @@
+# The build context is `apps/api`. `.gitignore` keeps secrets out of git; only
+# this file keeps them out of the image.
+.env
+.env.*
+!.env.example
+
+tests/
+**/__pycache__/
+**/*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.ruff_cache
+README.md
+Dockerfile
+.dockerignore
